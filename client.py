@@ -1,0 +1,192 @@
+"""Native BingX REST Client with HMAC-SHA256 authentication and error handling."""
+
+import hmac
+import hashlib
+import time
+import httpx
+from typing import Any, Dict, Optional
+from urllib.parse import urlencode
+
+from config import AppConfig
+
+class BingXAPIError(Exception):
+    def __init__(self, code: int, msg: str, response: Optional[httpx.Response] = None):
+        super().__init__(f"BingX API Error [{code}]: {msg}")
+        self.code = code
+        self.msg = msg
+        self.response = response
+
+class BingXClient:
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.base_url = config.bingx_host.rstrip("/")
+        self.client = httpx.Client(timeout=10.0)
+
+    @staticmethod
+    def sign_params(params: Dict[str, Any], secret_key: str) -> str:
+        """Sorts parameters alphabetically, formats query string, and generates HMAC-SHA256 hex digest."""
+        sorted_keys = sorted(params.keys())
+        query_str = "&".join(f"{k}={params[k]}" for k in sorted_keys)
+        return hmac.new(
+            secret_key.encode("utf-8"),
+            query_str.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        signed: bool = False
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        req_params = dict(params or {})
+        headers = {}
+
+        if self.config.api_key:
+            headers["X-BX-APIKEY"] = self.config.api_key
+
+        if signed:
+            if not self.config.secret_key:
+                raise ValueError("Secret key is required for signed requests.")
+            req_params["timestamp"] = int(time.time() * 1000)
+            req_params["recvWindow"] = 10000
+            
+            # Construct sorted query string to guarantee exact byte-for-byte parameter order
+            sorted_keys = sorted(req_params.keys())
+            query_str = "&".join(f"{k}={req_params[k]}" for k in sorted_keys)
+            signature = hmac.new(
+                self.config.secret_key.encode("utf-8"),
+                query_str.encode("utf-8"),
+                hashlib.sha256
+            ).hexdigest()
+            
+            final_url = f"{url}?{query_str}&signature={signature}"
+            send_params = None
+        else:
+            final_url = url
+            send_params = req_params if req_params else None
+
+        try:
+            resp = self.client.request(method, final_url, params=send_params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPError as e:
+            raise BingXAPIError(-1, f"HTTP transport error: {str(e)}") from e
+
+        code = data.get("code", 0)
+        if code != 0:
+            msg = data.get("msg", "Unknown error")
+            raise BingXAPIError(code, msg, response=resp)
+
+        return data.get("data", {})
+
+    # ==================== Account & Position Queries ====================
+
+    def get_balance(self) -> Any:
+        """Queries asset balance and equity via V3 endpoint."""
+        return self._request("GET", "/openApi/swap/v3/user/balance", signed=True)
+
+    def get_position_mode(self) -> Dict[str, Any]:
+        """Queries whether account is in Dual-Side (Hedge) Mode or One-Way Mode."""
+        return self._request("GET", "/openApi/swap/v1/positionSide/dual", signed=True)
+
+    def get_positions(self, symbol: Optional[str] = None) -> list:
+        """Queries open positions. Returns list of position dictionaries."""
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        res = self._request("GET", "/openApi/swap/v2/user/positions", params=params, signed=True)
+        return res if isinstance(res, list) else []
+
+    def get_open_orders(self, symbol: Optional[str] = None) -> list:
+        """Queries pending orders. Returns list of order dictionaries."""
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        res = self._request("GET", "/openApi/swap/v2/trade/openOrders", params=params, signed=True)
+        orders = res.get("orders", []) if isinstance(res, dict) else res
+        return orders if isinstance(orders, list) else []
+
+    def get_leverage(self, symbol: str) -> Dict[str, Any]:
+        """Queries current leverage and max available leverage for symbol."""
+        return self._request("GET", "/openApi/swap/v2/trade/leverage", params={"symbol": symbol}, signed=True)
+
+    def set_leverage(self, symbol: str, leverage: int, side: str = "SHORT") -> Dict[str, Any]:
+        """Sets leverage for a specific symbol and position side."""
+        params = {"symbol": symbol, "side": side, "leverage": leverage}
+        return self._request("POST", "/openApi/swap/v2/trade/leverage", params=params, signed=True)
+
+    # ==================== Market Data Queries ====================
+
+    def get_contracts(self) -> list:
+        """Queries all perpetual swap contracts and their trading rules."""
+        res = self._request("GET", "/openApi/swap/v2/quote/contracts", signed=False)
+        return res if isinstance(res, list) else []
+
+    def get_tickers(self) -> list:
+        """Queries 24h ticker data for all contracts."""
+        res = self._request("GET", "/openApi/swap/v2/quote/ticker", signed=False)
+        return res if isinstance(res, list) else []
+
+    def get_depth(self, symbol: str, limit: int = 5) -> Dict[str, Any]:
+        """Queries orderbook depth."""
+        return self._request("GET", "/openApi/swap/v2/quote/depth", params={"symbol": symbol, "limit": limit}, signed=False)
+
+    def get_klines(self, symbol: str, interval: str = "15m", limit: int = 30) -> list:
+        """Queries historical OHLCV klines."""
+        res = self._request("GET", "/openApi/swap/v3/quote/klines", params={"symbol": symbol, "interval": interval, "limit": limit}, signed=False)
+        return res if isinstance(res, list) else []
+
+    # ==================== Execution Endpoint ====================
+
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        position_side: str,
+        order_type: str,
+        quantity: float,
+        client_order_id: str,
+        price: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Submits an order to BingX Swap V2.
+        Enforces positionSide='SHORT' and side='SELL' for short-only entry agent in Hedge mode.
+        """
+        params = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": order_type,
+            "quantity": quantity,
+            "clientOrderId": client_order_id.lower()[:40],
+        }
+        if price is not None:
+            params["price"] = price
+
+        return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)
+
+    def close_position(
+        self,
+        symbol: str,
+        position_side: str,
+        quantity: float,
+        client_order_id: str
+    ) -> Dict[str, Any]:
+        """
+        Closes an open position in Hedge Mode.
+        For SHORT position: side='BUY', positionSide='SHORT', type='MARKET'
+        For LONG position: side='SELL', positionSide='LONG', type='MARKET'
+        """
+        close_side = "BUY" if position_side.upper() == "SHORT" else "SELL"
+        params = {
+            "symbol": symbol,
+            "side": close_side,
+            "positionSide": position_side.upper(),
+            "type": "MARKET",
+            "quantity": abs(quantity),
+            "clientOrderId": client_order_id.lower()[:40],
+        }
+        return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)

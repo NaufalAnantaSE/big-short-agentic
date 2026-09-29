@@ -1,0 +1,121 @@
+<template>
+  <div class="min-h-screen bg-background text-slate-100 flex flex-col justify-between font-sans selection:bg-sky-500 selection:text-white">
+    <!-- Unauthenticated View -->
+    <AuthView
+      v-if="!token"
+      @auth-success="handleAuthSuccess"
+    />
+
+    <!-- Authenticated Mobile Webview -->
+    <div v-else class="flex-1 flex flex-col max-w-md w-full mx-auto pb-10">
+      <!-- Top Navbar -->
+      <Navbar
+        :user="user"
+        :is-demo="isDemo"
+        :simple-mode="simpleMode"
+        @toggle-simple="simpleMode = !simpleMode"
+        @open-settings="showApiKeyModal = true"
+        @logout="handleLogout"
+      />
+
+      <!-- Main Content Scroll Area -->
+      <main class="p-4 flex-1">
+        <!-- Render Admin Dashboard if Admin -->
+        <AdminDashboard
+          v-if="user.role === 'admin'"
+          :token="token"
+        />
+
+        <!-- Render Trader Dashboard if Trader / Client -->
+        <TraderDashboard
+          v-else
+          :token="token"
+          :user="user"
+          :is-demo="isDemo"
+          :simple-mode="simpleMode"
+          @update-user="handleUserUpdate"
+        />
+      </main>
+
+      <!-- Global API Key Modal Triggered from Navbar (for trader) -->
+      <ApiKeyOnboardingModal
+        v-if="showApiKeyModal && user.role !== 'admin'"
+        :token="token"
+        :can-close="user.has_keys"
+        :initial-is-demo="isDemo"
+        @close="showApiKeyModal = false"
+        @saved="onApiKeySaved"
+      />
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import Navbar from './components/Navbar.vue'
+import AuthView from './components/AuthView.vue'
+import AdminDashboard from './components/AdminDashboard.vue'
+import TraderDashboard from './components/TraderDashboard.vue'
+import ApiKeyOnboardingModal from './components/ApiKeyOnboardingModal.vue'
+
+// Reactive state
+const token = ref(localStorage.getItem('bx_token') || '')
+const user = ref(JSON.parse(localStorage.getItem('bx_user') || 'null') || {})
+const isDemo = ref(user.value.is_demo !== false)
+const simpleMode = ref(true)
+const showApiKeyModal = ref(false)
+
+function handleAuthSuccess(data) {
+  token.value = data.token
+  user.value = data.user
+  isDemo.value = data.user.is_demo !== false
+  localStorage.setItem('bx_token', data.token)
+  localStorage.setItem('bx_user', JSON.stringify(data.user))
+}
+
+function handleLogout() {
+  // Purge all credentials, identity and local storage
+  token.value = ''
+  user.value = {}
+  isDemo.value = true
+  showApiKeyModal.value = false
+  localStorage.removeItem('bx_token')
+  localStorage.removeItem('bx_user')
+}
+
+function handleUserUpdate(patch) {
+  user.value = { ...user.value, ...patch }
+  if (patch.is_demo !== undefined) isDemo.value = patch.is_demo
+  localStorage.setItem('bx_user', JSON.stringify(user.value))
+}
+
+function onApiKeySaved(payload) {
+  showApiKeyModal.value = false
+  handleUserUpdate({ has_keys: true, is_demo: payload.isDemo })
+}
+
+async function verifyAuthSession() {
+  if (!token.value) return
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${token.value}` }
+    })
+    if (!res.ok) {
+      handleLogout()
+      return
+    }
+    const data = await res.json()
+    user.value = data
+    isDemo.value = data.is_demo !== false
+    localStorage.setItem('bx_user', JSON.stringify(data))
+  } catch (err) {
+    console.error('Failed to verify session:', err)
+  }
+}
+
+onMounted(() => {
+  if (token.value) {
+    verifyAuthSession()
+  }
+})
+</script>

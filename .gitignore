@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local Database & Secrets (DO NOT COMMIT)
+data/*.db
+data/*.db.bak
+data/*.sqlite3
+data/*.sqlite
+data/.master_key
+*.master_key
+logs/
+*.log
+*.jsonl
+.env
+.env.*
+*.secret
+*.pem
+*.key
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.pnpm-store/
+frontend/.env*.local
+
+# System & IDE
+.DS_Store
+.vscode/
+.idea/
