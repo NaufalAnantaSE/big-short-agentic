@@ -82,7 +82,7 @@ def compute_market_features(candles_by_tf: Dict[str, Iterable[Dict[str, Any]]], 
     return {"fresh": fresh, "timeframes": timeframes, "funding_rate": funding_rate, "open_interest": oi, "depth_imbalance": imbalance, "spread_pct": spread, "atr_to_friction": atr_pct / friction_pct if friction_pct > 0 else 0.0}
 
 
-def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.25) -> Tuple[bool, List[str]]:
+def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.35) -> Tuple[bool, List[str]]:
     reasons: List[str] = []
     if features.get("fresh") is not True:
         reasons.append("stale_data")
@@ -92,7 +92,7 @@ def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.25) -> Tuple[b
     spread, funding, ratio = _finite(features.get("spread_pct")), _finite(features.get("funding_rate")), _finite(features.get("atr_to_friction"))
     if spread is not None and spread > max_spread_pct: reasons.append("spread_too_wide")
     if funding is not None and funding <= -0.005: reasons.append("crowded_short_squeeze_risk")
-    if ratio is not None and ratio < 5.0: reasons.append("atr_below_friction_threshold")
+    if ratio is not None and ratio < 3.0: reasons.append("atr_below_friction_threshold")
     return not reasons, reasons
 
 

@@ -55,9 +55,29 @@ def normalize_ai_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
     if decision not in {"ENTER_SHORT", "WAIT", "SKIP"}:
         raise ValueError(f"unsupported decision: {decision or 'missing'}")
     raw = parsed.get("confidence", parsed.get("confidence_score", 0))
-    if isinstance(raw, float) and 0 <= raw <= 1:
-        raw *= 100
-    confidence = int(raw)
+    if isinstance(raw, str):
+        raw_str = raw.strip().lower().replace("%", "")
+        text_map = {
+            "very high": 90, "high": 80, "moderate": 65, "medium": 65,
+            "neutral": 50, "low": 35, "very low": 20
+        }
+        if raw_str in text_map:
+            confidence = text_map[raw_str]
+        else:
+            try:
+                val = float(raw_str)
+                if 0 <= val <= 1.0:
+                    val *= 100
+                confidence = int(round(val))
+            except ValueError:
+                confidence = 50
+    elif isinstance(raw, (int, float)):
+        if 0 <= raw <= 1.0:
+            raw *= 100
+        confidence = int(round(raw))
+    else:
+        confidence = 50
+    confidence = max(0, min(100, confidence))
     key_evidence = str(parsed.get("key_evidence", parsed.get("reasoning", parsed.get("evidence", ""))))
     risk_factors = str(parsed.get("risk_factors", parsed.get("risks", parsed.get("risk_assessment", ""))))
     return {
@@ -84,11 +104,14 @@ def build_snapshot_prompt(candidates: list[Dict[str, Any]]) -> str:
 
 
 def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
+    symbol = candidate.get("symbol", "UNKNOWN")
     return (
-        "Return strict JSON only. You are the " + role + ". "
-        "Assess evidence, uncertainty, and reasons not to trade. "
-        "Allowed decisions are ENTER_SHORT, WAIT, SKIP. Candidate: " +
-        json.dumps(candidate, separators=(",", ":"))
+        f"You are the {role} in an automated crypto shorting risk engine.\n"
+        f"Evaluate this asset setup for an optimal short entry or whether to wait/skip.\n"
+        f"Candidate Setup: {json.dumps(candidate, separators=(',', ':'))}\n\n"
+        f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
+        f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
+        f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<reason>", "risk_factors": "<risks>"}}'
     )
 
 
@@ -109,7 +132,7 @@ class AIEvaluator:
     def __init__(self, config: AppConfig):
         self.config = config
         self.url = f"{config.ai_gateway_url.rstrip('/')}/chat/completions"
-        self.client = httpx.Client(timeout=8.0) # 8.0s hard cutoff as specified in SRS-NFR-002
+        self.client = httpx.Client(timeout=30.0)
 
     def _chat_call(self, prompt: str, system_prompt: str = "You are a quantitative trading risk engine. Always output pure valid JSON.") -> tuple[Dict[str, Any], Dict[str, Any], float]:
         payload = {
@@ -138,7 +161,7 @@ class AIEvaluator:
         roles = [
             "Short Hunter looking for exhaustion, buyer dry-up, and lower highs",
             "Squeeze Defender looking for continuation, crowded short traps, and momentum",
-            "Risk Arbiter synthesizing both sides to make the final conservative decision",
+            "Execution Arbiter. Strategy note: in pump exhaustion trading, entries occur at the top during buyer exhaustion / upper wick rejection, NOT after the price has already dumped. If rejection wick and buyer dry-up are visible after a pump or overextension, authorize ENTER_SHORT",
         ]
         usages: list[Dict[str, Any]] = []
         total_latency = 0.0
@@ -152,7 +175,7 @@ class AIEvaluator:
                 last_parsed = parsed
             decision = last_parsed["decision"]
             confidence = int(last_parsed.get("confidence", 0))
-            if decision == "ENTER_SHORT" and confidence < 75:
+            if decision == "ENTER_SHORT" and confidence < 70:
                 decision = "WAIT"
             return AIEvaluationResult(
                 symbol=symbol,
@@ -191,17 +214,21 @@ class AIEvaluator:
         Fails closed (returns SKIP/WAIT) on timeout, network error, or invalid JSON.
         """
         prompt = (
-            f"You are a strict risk-averse quantitative crypto analyst specializing in Short-Only Memecoin Perpetual setups.\\n"
-            f"Evaluate whether the following asset exhibits valid 'PUMP_EXHAUSTION' (buyer exhaustion, upper rejection wick, drop in buying volume) "
-            f"or 'BREAKDOWN_RETEST' suitable for a SHORT entry.\\n\\n"
-            f"Asset Data:\\n"
-            f"- Symbol: {symbol}\\n"
-            f"- Current Price: {current_price}\\n"
-            f"- 24h Price Change: {price_change_24h}%\\n"
-            f"- Spread: {spread_pct}%\\n"
-            f"- Recent 15m Closes: {klines_summary[-5:] if klines_summary else 'N/A'}\\n"
-            f"- Deterministic Market Features: {json.dumps(market_features or {}, separators=(',', ':'))}\\n\\n"
-            f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\\n"
+            f"You are a quantitative crypto trading analyst specializing in Short-Only Perpetual setups.\n"
+            f"Evaluate whether the following asset exhibits valid short opportunities such as 'PUMP_EXHAUSTION' (buyer exhaustion, upper rejection wick, drop in buying volume after pump) "
+            f"or 'BREAKDOWN_RETEST' suitable for a SHORT entry.\n\n"
+            f"Asset Data:\n"
+            f"- Symbol: {symbol}\n"
+            f"- Current Price: {current_price}\n"
+            f"- 24h Price Change: {price_change_24h}%\n"
+            f"- Spread: {spread_pct}%\n"
+            f"- Recent 15m Closes: {klines_summary[-5:] if klines_summary else 'N/A'}\n"
+            f"- Deterministic Market Features: {json.dumps(market_features or {}, separators=(',', ':'))}\n\n"
+            f"Guidance:\n"
+            f"- If price shows signs of seller emergence, buyer dry-up, or local exhaustion, recommend ENTER_SHORT with realistic confidence (60-95).\n"
+            f"- If momentum is still strongly upward without rejection, recommend WAIT.\n"
+            f"- If market is too illiquid or high risk, recommend SKIP.\n\n"
+            f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
             f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
             f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<short reason>", "risk_factors": "<risks>"}}'
         )
@@ -238,8 +265,8 @@ class AIEvaluator:
             usage = data.get("usage", {}) if isinstance(data.get("usage", {}), dict) else {}
             decision = parsed["decision"]
             confidence = parsed["confidence"]
-            # Quality gate: minimum 75% confidence for ENTER_SHORT
-            if decision == "ENTER_SHORT" and confidence < 75:
+            # Quality gate: minimum 70% confidence for ENTER_SHORT
+            if decision == "ENTER_SHORT" and confidence < 70:
                 decision = "WAIT"
 
             return AIEvaluationResult(

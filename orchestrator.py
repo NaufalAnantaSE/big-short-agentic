@@ -25,7 +25,7 @@ class SessionState(BaseModel):
 
 
 MAX_TRIAGE_CANDIDATES = 12
-MAX_DEEP_CANDIDATES = 3
+MAX_DEEP_CANDIDATES = 1
 MAX_CYCLE_TOKENS = 30000
 
 class SessionOrchestrator:
