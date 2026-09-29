@@ -39,11 +39,11 @@
             v-model="aiForm.model"
             type="text"
             required
-            placeholder="Contoh: ag/gemini-3.8-flash"
+            placeholder="Contoh: testing_v1"
             class="w-full h-11 px-3.5 rounded-xl bg-slate-900 border border-border text-xs text-slate-100 font-mono focus:outline-none focus:border-sky-500"
           />
           <p class="text-[10px] text-slate-400 mt-1">
-            Rujukan model via 9Router (misal: <code class="text-sky-300">ag/gemini-3.8-flash</code> atau <code class="text-sky-300">ag/gemini-3.7-flash</code>).
+            Rujukan model via 9Router (default: <code class="text-sky-300">testing_v1</code>).
           </p>
         </div>
 

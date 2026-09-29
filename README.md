@@ -7,7 +7,7 @@ Platform otomatisasi perdagangan berjangka (perpetual futures short-only) di Bin
 ## 🌟 Fitur Utama
 
 - **Short-Only Engine**: Dirancang spesifik untuk mendeteksi pump exhaustion, buyer dry-up, dan pembalikan harga pada token volatil/memecoin.
-- **AI Adversarial Evaluation**: Analisis pasar berbasis LLM via 9Router (Short Hunter, Squeeze Defender, Risk Arbiter) dengan model terpusat (default: `ag/gemini-3.8-flash`).
+- **AI Adversarial Evaluation**: Analisis pasar berbasis LLM via 9Router (Short Hunter, Squeeze Defender, Risk Arbiter) dengan model terpusat (default: `testing_v1`).
 - **Senior-Friendly Explainer**: Menerjemahkan metrik kuantitatif dan sinyal teknis ke dalam bahasa Indonesia yang awam, tenang, dan transparan beserta estimasi modal Rupiah.
 - **Pemisahan Peran Mutlak (Role Separation)**:
   - **Admin**: Khusus mengelola lisensi pengguna berbayar dan konfigurasi model AI (diblokir dari eksekusi trading bot).

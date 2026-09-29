@@ -8,7 +8,7 @@ class AppConfig(BaseModel):
     # API endpoints
     bingx_host: str = Field(default="https://open-api-vst.bingx.com", description="BingX API Base URL")
     ai_gateway_url: str = Field(default="http://127.0.0.1:20128/v1", description="9Router OpenAI-Compatible URL")
-    ai_model_name: str = Field(default="ag/gemini-3.8-flash", description="AI Model alias in 9Router")
+    ai_model_name: str = Field(default="testing_v1", description="AI Model alias in 9Router")
     
     # Credentials (kept in memory, never logged)
     api_key: str = ""

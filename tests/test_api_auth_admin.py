@@ -151,7 +151,7 @@ def test_admin_ai_settings_and_sessions(client):
     assert put_res.json()["model"] == "ag/gemini-3.7-flash"
 
     # Reset back to default
-    client.put("/api/admin/ai-settings", json={"model": "ag/gemini-3.8-flash"}, headers=admin_headers)
+    client.put("/api/admin/ai-settings", json={"model": "testing_v1"}, headers=admin_headers)
 
     # 3. Monitor client sessions
     sess_res = client.get("/api/admin/sessions", headers=admin_headers)
