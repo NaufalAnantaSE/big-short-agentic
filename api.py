@@ -58,8 +58,12 @@ class SessionStartRequest(BaseModel):
     mode: str = Field(default="PUMP_GAINERS")
     is_live: bool = False
 
+class SessionUpdateRequest(BaseModel):
+    margin_per_pos: Optional[float] = Field(None, ge=1.0, le=500.0)
+    quota: Optional[int] = Field(None, ge=1, le=50)
+
 class CycleRequest(BaseModel):
-    dry_run: bool = True
+    dry_run: bool = False
 
 class UpdateAISettingsRequest(BaseModel):
     model: str
@@ -203,6 +207,18 @@ def start_session(req: SessionStartRequest, user: Dict[str, Any] = Depends(requi
             quota=req.quota,
             mode=req.mode,
             is_live=req.is_live
+        )
+        return {"success": True, "session": res}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/api/session/update")
+def update_session(req: SessionUpdateRequest, user: Dict[str, Any] = Depends(require_trader)):
+    try:
+        res = tenant_manager.update_session_params(
+            user_id=user["id"],
+            margin_per_pos=req.margin_per_pos,
+            quota=req.quota
         )
         return {"success": True, "session": res}
     except Exception as exc:

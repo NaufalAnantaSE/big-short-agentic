@@ -181,6 +181,25 @@ def update_session_status(session_id: str, status: str, filled_count: int, stopp
                            (status, filled_count, session_id))
         conn.commit()
 
+def update_session_params(session_id: str, margin_per_pos: Optional[float] = None, quota: Optional[int] = None, status: Optional[str] = None):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        fields = []
+        vals = []
+        if margin_per_pos is not None:
+            fields.append("margin_per_pos = ?")
+            vals.append(float(margin_per_pos))
+        if quota is not None:
+            fields.append("quota = ?")
+            vals.append(int(quota))
+        if status is not None:
+            fields.append("status = ?")
+            vals.append(status)
+        if fields:
+            vals.append(session_id)
+            cursor.execute(f"UPDATE sessions SET {', '.join(fields)} WHERE session_id = ?", tuple(vals))
+            conn.commit()
+
 def get_latest_user_session(user_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         cursor = conn.cursor()

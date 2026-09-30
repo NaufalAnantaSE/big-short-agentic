@@ -69,8 +69,18 @@ class SessionOrchestrator:
         4. Calculates exact lot sizing
         5. Executes order (if dry_run=False) or returns order plan (if dry_run=True)
         """
-        if not self.current_session or self.current_session.status != "ACTIVE_SEARCHING":
+        if not self.current_session or self.current_session.status not in ("ACTIVE_SEARCHING", "EXHAUSTED"):
             return {"status": "NO_ACTIVE_SESSION", "message": "No active session in searching state."}
+
+        # Synchronize filled_count with actual positions/orders on exchange
+        if not dry_run and self.config.api_key != "mock":
+            try:
+                occupied = self.scanner.get_occupied_symbols()
+                self.current_session.filled_count = len(occupied)
+                if self.current_session.filled_count < self.current_session.quota and self.current_session.status == "EXHAUSTED":
+                    self.current_session.status = "ACTIVE_SEARCHING"
+            except Exception:
+                pass
 
         if self.current_session.filled_count >= self.current_session.quota:
             self.current_session.status = "EXHAUSTED"
@@ -216,10 +226,12 @@ class SessionOrchestrator:
                             quantity=sizing.quantity,
                             client_order_id=client_order_id
                         )
+                        order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
+                        order_id_str = str(order_id_raw)
                         execution_report["executed"] = True
                         execution_report["dry_run"] = False
                         execution_report["client_order_id"] = client_order_id
-                        execution_report["order_id"] = order_res.get("orderId")
+                        execution_report["order_id"] = order_id_str
                         self.current_session.filled_count += 1
                         self.current_session.executed_symbols.append(cand.symbol)
 
@@ -231,7 +243,7 @@ class SessionOrchestrator:
                             quantity=sizing.quantity,
                             price=cand.last_price,
                             client_order_id=client_order_id,
-                            order_id=order_res.get("orderId"),
+                            order_id=order_id_str,
                             status="FILLED",
                             session_id=self.current_session.session_id
                         )

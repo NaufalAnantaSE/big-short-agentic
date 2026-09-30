@@ -179,6 +179,49 @@ class TenantSessionManager:
             "is_live": is_live
         }
 
+    def update_session_params(
+        self,
+        user_id: int,
+        margin_per_pos: Optional[float] = None,
+        quota: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Allows dynamically updating margin and quota for active user session."""
+        orch = self.get_orchestrator(user_id)
+        if not orch.current_session:
+            latest = db.get_latest_user_session(user_id)
+            if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
+                orch.current_session = SessionState(
+                    session_id=latest["session_id"],
+                    status=latest["status"],
+                    margin_per_pos=latest["margin_per_pos"],
+                    leverage=latest["leverage"],
+                    quota=latest["quota"],
+                    filled_count=latest["filled_count"],
+                    started_at=latest["started_at"]
+                )
+
+        if orch.current_session:
+            if margin_per_pos is not None:
+                orch.current_session.margin_per_pos = float(margin_per_pos)
+            if quota is not None:
+                orch.current_session.quota = int(quota)
+                if orch.current_session.status == "EXHAUSTED" and orch.current_session.filled_count < orch.current_session.quota:
+                    orch.current_session.status = "ACTIVE_SEARCHING"
+            db.update_session_params(
+                session_id=orch.current_session.session_id,
+                margin_per_pos=orch.current_session.margin_per_pos,
+                quota=orch.current_session.quota,
+                status=orch.current_session.status
+            )
+            return {
+                "session_id": orch.current_session.session_id,
+                "status": orch.current_session.status,
+                "margin_per_pos": orch.current_session.margin_per_pos,
+                "quota": orch.current_session.quota,
+                "filled_count": orch.current_session.filled_count
+            }
+        return {"status": "NO_ACTIVE_SESSION", "message": "Tidak ada sesi aktif untuk diperbarui."}
+
     def stop_session(self, user_id: int) -> Dict[str, Any]:
         """Stops searching session without closing existing positions."""
         orch = self._orchestrator_pool.get(user_id)
@@ -195,12 +238,12 @@ class TenantSessionManager:
         
         return {"status": "IDLE", "message": "Tidak ada sesi aktif yang sedang berjalan."}
 
-    def run_cycle_for_user(self, user_id: int, dry_run: bool = True) -> Dict[str, Any]:
+    def run_cycle_for_user(self, user_id: int, dry_run: bool = False) -> Dict[str, Any]:
         """Executes one scan-evaluate-execute cycle for this user."""
         orch = self.get_orchestrator(user_id)
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
-            if latest and latest["status"] == "ACTIVE_SEARCHING":
+            if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
                 # Restore session into orchestrator
                 orch.current_session = SessionState(
                     session_id=latest["session_id"],
@@ -225,9 +268,14 @@ class TenantSessionManager:
             )
 
         # Humanize each candidate evaluation for senior/non-technical users
+        is_quota_full = (orch.current_session.filled_count >= orch.current_session.quota) if orch.current_session else False
         humanized_evals = []
         for ev in res.get("evaluations", []):
             sizing = ev.get("sizing", {})
+            executed = bool(ev.get("executed", False))
+            order_id = ev.get("order_id")
+            dry_run_flag = bool(ev.get("dry_run", dry_run))
+            sizing_valid = bool(sizing.get("is_valid", True))
             h = humanize_ai_decision(
                 symbol=ev.get("symbol", ""),
                 decision=ev.get("ai_decision", "SKIP"),
@@ -237,19 +285,24 @@ class TenantSessionManager:
                 price=ev.get("price", 0.0),
                 change_24h=ev.get("market_features", {}).get("timeframes", {}).get("15m", {}).get("change_pct", 0.0) or 0.0,
                 spread_pct=ev.get("market_features", {}).get("spread_pct", 0.0) or 0.0,
-                margin_per_pos=orch.current_session.margin_per_pos,
-                leverage=orch.current_session.leverage
+                margin_per_pos=orch.current_session.margin_per_pos if orch.current_session else 5.0,
+                leverage=orch.current_session.leverage if orch.current_session else 20,
+                executed=executed,
+                order_id=str(order_id) if order_id else None,
+                dry_run=dry_run_flag,
+                sizing_valid=sizing_valid,
+                is_quota_full=is_quota_full
             )
             # Add execution information
-            h["executed"] = ev.get("executed", False)
-            h["order_id"] = ev.get("order_id")
+            h["executed"] = executed
+            h["order_id"] = order_id
             h["client_order_id"] = ev.get("client_order_id")
-            h["dry_run"] = ev.get("dry_run", dry_run)
+            h["dry_run"] = dry_run_flag
             h["quantity"] = sizing.get("quantity", 0)
             h["notional"] = sizing.get("notional_value", 0)
             
             # Record order to DB if executed
-            if ev.get("executed") and ev.get("order_id"):
+            if executed and order_id:
                 db.record_order(
                     user_id=user_id,
                     session_id=orch.current_session.session_id,
@@ -259,7 +312,7 @@ class TenantSessionManager:
                     notional=sizing.get("notional_value", 0),
                     leverage=orch.current_session.leverage,
                     client_order_id=ev.get("client_order_id", ""),
-                    order_id=str(ev.get("order_id")),
+                    order_id=str(order_id),
                     status="FILLED"
                 )
 

@@ -16,7 +16,7 @@
             <span class="text-base font-extrabold text-slate-100">$</span>
             <input
               v-model.number="margin"
-              :disabled="isActive"
+              @change="onParamChange"
               type="number"
               min="1"
               max="500"
@@ -33,10 +33,10 @@
           <div class="flex items-center space-x-1">
             <input
               v-model.number="quota"
-              :disabled="isActive"
+              @change="onParamChange"
               type="number"
               min="1"
-              max="20"
+              max="50"
               class="w-full bg-transparent text-base font-extrabold text-slate-100 focus:outline-none"
             />
             <span class="text-[11px] font-bold text-slate-400">Koin</span>
@@ -141,6 +141,30 @@ const currentFilled = computed(() => {
   return props.sessionState?.filled_count || 0
 })
 
+watch(() => props.sessionState, (newSess) => {
+  if (newSess?.margin_per_pos) margin.value = Number(newSess.margin_per_pos)
+  if (newSess?.quota) quota.value = Number(newSess.quota)
+}, { immediate: true })
+
+async function onParamChange() {
+  if (!isActive.value) return
+  try {
+    await fetch('/api/session/update', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${props.token}`
+      },
+      body: JSON.stringify({
+        margin_per_pos: margin.value,
+        quota: quota.value
+      })
+    })
+  } catch (err) {
+    console.error('Failed to update session parameter:', err)
+  }
+}
+
 function formatIDR(usdt) {
   if (!usdt) return '0'
   return Math.round(Number(usdt) * 16200).toLocaleString('id-ID')
@@ -190,6 +214,10 @@ async function startSession() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Gagal memulai sesi.')
     emit('session-started', data.session)
+
+    // Langsung aktifkan mode auto-scan dan eksekusi cycle pemindaian pertama secara instan
+    autoScan.value = true
+    await triggerCycle()
   } catch (err) {
     alert(err.message)
   } finally {
@@ -228,7 +256,7 @@ async function triggerCycle() {
         'Authorization': `Bearer ${props.token}`
       },
       body: JSON.stringify({
-        dry_run: !props.isLiveMode
+        dry_run: false // Selalu eksekusi riil ke BingX API (baik VST Demo maupun Live)
       })
     })
     const data = await res.json()

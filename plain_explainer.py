@@ -14,7 +14,12 @@ def humanize_ai_decision(
     change_24h: float,
     spread_pct: float,
     margin_per_pos: float = 5.0,
-    leverage: int = 20
+    leverage: int = 20,
+    executed: bool = False,
+    order_id: Optional[str] = None,
+    dry_run: bool = False,
+    sizing_valid: bool = True,
+    is_quota_full: bool = False
 ) -> Dict[str, Any]:
     """
     Produces a senior-friendly narrative card with high legibility and clear, empathetic explanations.
@@ -25,17 +30,36 @@ def humanize_ai_decision(
     # 1. Headline badge & title
     if decision == "ENTER_SHORT":
         badge_color = "emerald"
-        badge_label = "REKOMENDASI: AMAN BUKA POSISI JUAL"
-        summary_title = f"Koin {clean_sym} Siap Dijual (Potensi Penurunan Terbuka)"
-        action_advice = "AI mendeteksi lonjakan harga telah mencapai batas jenuh pembeli. Sangat ideal untuk membuka posisi jual (Short) dengan modal kecil yang terukur."
+        if executed:
+            badge_label = "ORDER SHORT TERPASANG"
+            summary_title = f"Posisi Jual Koin {clean_sym} Berhasil Dibuka"
+            action_advice = f"AI mendeteksi batas jenuh pembeli dan posisi jual (Short) telah berhasil dieksekusi ke bursa BingX (Order ID: {order_id or '-'})."
+        elif dry_run:
+            badge_label = "SIMULASI SHORT TERBUKA"
+            summary_title = f"Simulasi Short Koin {clean_sym} Aktif"
+            action_advice = "Koin memenuhi kriteria short dan simulasi eksekusi berhasil dicatat dalam mode dry-run."
+        elif is_quota_full:
+            badge_color = "slate"
+            badge_label = "TERTAHAN: KUOTA PENUH"
+            summary_title = f"Koin {clean_sym} Siap Dijual (Tertahan Kuota)"
+            action_advice = "Koin ini sangat ideal untuk di-short, namun kuota maksimal posisi akun Anda saat ini sudah penuh."
+        elif not sizing_valid:
+            badge_color = "amber"
+            badge_label = "TERLEWAT: MINIMAL BURSA"
+            summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
+            action_advice = "Koin ini memiliki sinyal short yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
+        else:
+            badge_label = "EKSEKUSI: SIAP BUKA POSISI"
+            summary_title = f"Koin {clean_sym} Siap Dijual (Potensi Penurunan Terbuka)"
+            action_advice = "AI mendeteksi lonjakan harga telah mencapai batas jenuh pembeli. Posisi jual (Short) siap dieksekusi."
     elif decision == "WAIT":
         badge_color = "amber"
-        badge_label = "STATUS: SEDANG DIPANTAU (TUNGGU MOMEN)"
-        summary_title = f"Koin {clean_sym} Masih Naik, AI Memilih Menunggu"
+        badge_label = "STATUS: MEMANTAU (TUNGGU MOMEN)"
+        summary_title = f"Koin {clean_sym} Masih Naik, AI Menunggu Puncak Jenuh"
         action_advice = "Koin ini sedang mengalami kenaikan tajam namun belum menunjukkan tanda pasti penurunan. Untuk menjaga modal Anda tetap aman, bot menahan diri sampai pembeli benar-benar habis."
     else:  # SKIP
         badge_color = "slate"
-        badge_label = "STATUS: DILEWATI DEMI KEAMANAN"
+        badge_label = "STATUS: DILEWATI"
         summary_title = f"Koin {clean_sym} Dilewati (Risiko Kurang Ideal)"
         action_advice = "Koin ini dilewati karena pergerakan harga tidak memenuhi standar keamanan atau transaksi pasar sedang terlalu sepi."
 
