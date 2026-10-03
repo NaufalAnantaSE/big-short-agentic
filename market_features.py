@@ -1,4 +1,4 @@
-"""Deterministic crypto-perpetual features and fail-closed hard gates."""
+"""Deterministic crypto-perpetual features, Fibonacci retracements, wave exhaustion, and fail-closed hard gates."""
 
 from __future__ import annotations
 
@@ -56,7 +56,181 @@ def _timeframe_features(rows: Iterable[Dict[str, Any]], now_ms: int) -> Dict[str
     }
 
 
-def compute_market_features(candles_by_tf: Dict[str, Iterable[Dict[str, Any]]], funding: Dict[str, Any], open_interest: Dict[str, Any], depth: Dict[str, Any], now_ms: int, max_age_ms: int = 120_000, max_funding_age_ms: int = 43_200_000) -> Dict[str, Any]:
+def _fibonacci_analysis(closed_rows: List[Dict[str, float]], current_price: float) -> Dict[str, Any]:
+    """
+    Computes mathematical Fibonacci Retracement and Extension levels over the recent swing window.
+    Standard Retracement levels from Swing High (0.0) to Swing Low (1.0):
+      0.0   - Swing High (peak resistance)
+      0.236 - Shallow initial pullback
+      0.382 - Healthy pullback zone
+      0.500 - Midpoint equilibrium
+      0.618 - Golden pocket
+      0.786 - Deep retracement / breakdown
+      1.000 - Swing Low (base support)
+    Extension levels:
+      1.272 & 1.618 - Overextended Blow-Off Top exhaustion targets
+    """
+    if not closed_rows or len(closed_rows) < 3 or current_price <= 0:
+        return {
+            "valid": False,
+            "zone": "UNKNOWN",
+            "retracement_ratio": 0.0,
+            "swing_high": current_price,
+            "swing_low": current_price,
+            "fib_0_high": current_price,
+            "fib_236": current_price,
+            "fib_382": current_price,
+            "fib_500": current_price,
+            "fib_618": current_price,
+            "fib_786": current_price,
+            "fib_100_low": current_price,
+            "fib_ext_1272": current_price,
+            "fib_ext_1618": current_price,
+            "is_peak_exhaustion": False,
+            "is_dump_extended": False,
+        }
+
+    # Use up to the last 24 closed candles to determine local swing
+    window = closed_rows[-24:]
+    highs = [r["high"] for r in window]
+    lows = [r["low"] for r in window]
+    swing_high = max(highs)
+    swing_low = min(lows)
+    swing_range = max(swing_high - swing_low, 1e-12)
+
+    fib_236 = swing_high - 0.236 * swing_range
+    fib_382 = swing_high - 0.382 * swing_range
+    fib_500 = swing_high - 0.500 * swing_range
+    fib_618 = swing_high - 0.618 * swing_range
+    fib_786 = swing_high - 0.786 * swing_range
+    fib_ext_1272 = swing_low + 1.272 * swing_range
+    fib_ext_1618 = swing_low + 1.618 * swing_range
+
+    retracement_ratio = (swing_high - current_price) / swing_range
+
+    if retracement_ratio <= 0.0:
+        zone = "BLOW_OFF_EXTENSION"
+    elif retracement_ratio <= 0.15:
+        zone = "PEAK_EXHAUSTION"
+    elif retracement_ratio <= 0.382:
+        zone = "SHALLOW_PULLBACK"
+    elif retracement_ratio <= 0.618:
+        zone = "MID_RETRACEMENT"
+    else:
+        zone = "EXTENDED_DUMP"
+
+    is_peak_exhaustion = zone in ("BLOW_OFF_EXTENSION", "PEAK_EXHAUSTION", "SHALLOW_PULLBACK")
+    is_dump_extended = zone == "EXTENDED_DUMP"
+
+    return {
+        "valid": True,
+        "zone": zone,
+        "retracement_ratio": round(retracement_ratio, 4),
+        "swing_high": round(swing_high, 6),
+        "swing_low": round(swing_low, 6),
+        "fib_0_high": round(swing_high, 6),
+        "fib_236": round(fib_236, 6),
+        "fib_382": round(fib_382, 6),
+        "fib_500": round(fib_500, 6),
+        "fib_618": round(fib_618, 6),
+        "fib_786": round(fib_786, 6),
+        "fib_100_low": round(swing_low, 6),
+        "fib_ext_1272": round(fib_ext_1272, 6),
+        "fib_ext_1618": round(fib_ext_1618, 6),
+        "distance_to_high_pct": round(((swing_high - current_price) / current_price) * 100, 2),
+        "is_peak_exhaustion": is_peak_exhaustion,
+        "is_dump_extended": is_dump_extended,
+    }
+
+
+def _impulse_wave_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[Dict[str, float]], current_price: float) -> Dict[str, Any]:
+    """
+    Analyzes candlestick waves and impulse structure:
+      - Consecutive impulse green candles in recent run
+      - Volume fade on higher prices (Bearish Volume Divergence)
+      - Upper wick rejection confluence across 15m & 1h
+    """
+    if not closed_15m:
+        return {
+            "valid": False,
+            "consecutive_bull_bars": 0,
+            "volume_fade": False,
+            "confluent_rejection": False,
+            "wick_15m": 0.0,
+            "wick_1h": 0.0,
+            "exhaustion_score": 0
+        }
+
+    bull_count = 0
+    for r in reversed(closed_15m[-8:]):
+        if r["close"] >= r["open"]:
+            bull_count += 1
+        else:
+            break
+
+    volumes = [r["volume"] for r in closed_15m[-6:]]
+    vol_mean = mean(volumes[:-1]) if len(volumes) > 1 else (volumes[0] if volumes else 0.0)
+    last_vol = volumes[-1] if volumes else 0.0
+    volume_fade = (last_vol < vol_mean * 0.75) and (bull_count >= 2)
+
+    last_15m = closed_15m[-1]
+    range_15m = max(last_15m["high"] - last_15m["low"], 1e-12)
+    wick_15m = (last_15m["high"] - max(last_15m["open"], last_15m["close"])) / range_15m
+
+    wick_1h = 0.0
+    if closed_1h:
+        last_1h = closed_1h[-1]
+        range_1h = max(last_1h["high"] - last_1h["low"], 1e-12)
+        wick_1h = (last_1h["high"] - max(last_1h["open"], last_1h["close"])) / range_1h
+
+    confluent_rejection = (wick_15m >= 0.40) or (wick_15m >= 0.25 and wick_1h >= 0.25)
+
+    score = 0
+    if bull_count >= 3:
+        score += 30
+    elif bull_count >= 2:
+        score += 15
+    if volume_fade:
+        score += 25
+    if confluent_rejection:
+        score += 35
+    if wick_15m >= 0.50:
+        score += 10
+
+    return {
+        "valid": True,
+        "consecutive_bull_bars": bull_count,
+        "volume_fade": volume_fade,
+        "confluent_rejection": confluent_rejection,
+        "wick_15m": round(wick_15m, 3),
+        "wick_1h": round(wick_1h, 3),
+        "exhaustion_score": min(score, 100)
+    }
+
+
+def _funding_sentiment(funding_rate: float | None) -> str:
+    if funding_rate is None:
+        return "UNKNOWN"
+    if funding_rate > 0.0005:
+        return "EXTREME_LONG_CROWD"
+    if funding_rate > 0.0001:
+        return "MODERATE_LONG_CROWD"
+    if funding_rate >= 0.0:
+        return "NEUTRAL_POSITIVE"
+    if funding_rate >= -0.005:
+        return "MILD_NEGATIVE"
+    return "EXTREME_SHORT_CROWD_SQUEEZE_RISK"
+
+
+def compute_market_features(
+    candles_by_tf: Dict[str, Iterable[Dict[str, Any]]],
+    funding: Dict[str, Any],
+    open_interest: Dict[str, Any],
+    depth: Dict[str, Any],
+    now_ms: int,
+    max_age_ms: int = 120_000,
+    max_funding_age_ms: int = 43_200_000
+) -> Dict[str, Any]:
     timeframes = {tf: _timeframe_features(rows, now_ms) for tf, rows in candles_by_tf.items()}
     funding_rate = _finite(funding.get("lastFundingRate"))
     oi = _finite(open_interest.get("openInterest"))
@@ -65,7 +239,6 @@ def compute_market_features(candles_by_tf: Dict[str, Iterable[Dict[str, Any]]], 
     depth_ts = _finite(depth.get("T"))
 
     def is_fresh(ts: float | None, max_age: int) -> bool:
-        # Exchange clocks can lead local clock by a few seconds; larger future drift is invalid.
         return ts is not None and ts <= now_ms + 5_000 and now_ms - ts <= max_age
 
     fresh = is_fresh(funding_ts, max_funding_age_ms) and is_fresh(oi_ts, max_age_ms) and is_fresh(depth_ts, max_age_ms)
@@ -79,7 +252,28 @@ def compute_market_features(candles_by_tf: Dict[str, Iterable[Dict[str, Any]]], 
     spread = ((best_ask - best_bid) / best_bid * 100) if best_bid and best_ask and best_ask >= best_bid else float("nan")
     atr_pct = max(float(timeframes.get("1h", {}).get("atr_pct", 0.0) or 0.0), float(timeframes.get("15m", {}).get("atr_pct", 0.0) or 0.0))
     friction_pct = 0.10 + (spread if math.isfinite(spread) else 1.0)
-    return {"fresh": fresh, "timeframes": timeframes, "funding_rate": funding_rate, "open_interest": oi, "depth_imbalance": imbalance, "spread_pct": spread, "atr_to_friction": atr_pct / friction_pct if friction_pct > 0 else 0.0}
+
+    # Multi-timeframe closed candle series for Fibonacci and Wave analysis
+    closed_1h = _closed_rows(candles_by_tf.get("1h", []), now_ms)
+    closed_15m = _closed_rows(candles_by_tf.get("15m", []), now_ms)
+    last_close = closed_15m[-1]["close"] if closed_15m else (closed_1h[-1]["close"] if closed_1h else 0.0)
+
+    fibonacci = _fibonacci_analysis(closed_1h or closed_15m, last_close)
+    impulse_wave = _impulse_wave_analysis(closed_15m, closed_1h, last_close)
+    funding_sent = _funding_sentiment(funding_rate)
+
+    return {
+        "fresh": fresh,
+        "timeframes": timeframes,
+        "funding_rate": funding_rate,
+        "funding_sentiment": funding_sent,
+        "open_interest": oi,
+        "depth_imbalance": imbalance,
+        "spread_pct": spread,
+        "atr_to_friction": atr_pct / friction_pct if friction_pct > 0 else 0.0,
+        "fibonacci": fibonacci,
+        "impulse_wave": impulse_wave
+    }
 
 
 def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.35) -> Tuple[bool, List[str]]:
@@ -90,9 +284,18 @@ def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.35) -> Tuple[b
         if _finite(features.get(key)) is None:
             reasons.append("non_finite")
     spread, funding, ratio = _finite(features.get("spread_pct")), _finite(features.get("funding_rate")), _finite(features.get("atr_to_friction"))
-    if spread is not None and spread > max_spread_pct: reasons.append("spread_too_wide")
-    if funding is not None and funding <= -0.005: reasons.append("crowded_short_squeeze_risk")
-    if ratio is not None and ratio < 3.0: reasons.append("atr_below_friction_threshold")
+    if spread is not None and spread > max_spread_pct:
+        reasons.append("spread_too_wide")
+    if funding is not None and funding <= -0.005:
+        reasons.append("crowded_short_squeeze_risk")
+    if ratio is not None and ratio < 3.0:
+        reasons.append("atr_below_friction_threshold")
+
+    # Reject if price has already dumped past 68% of the swing (avoid shorting the bottom)
+    fib = features.get("fibonacci")
+    if isinstance(fib, dict) and fib.get("valid") and fib.get("is_dump_extended"):
+        reasons.append("dump_already_extended")
+
     return not reasons, reasons
 
 

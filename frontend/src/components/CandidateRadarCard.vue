@@ -49,6 +49,29 @@
           </span>
         </div>
 
+        <!-- Metric Badges Row (Fibonacci, Wave, Funding) -->
+        <div class="flex flex-wrap items-center gap-1.5 mb-2">
+          <span
+            v-if="item.fibonacci_zone"
+            :class="fibBadgeClass(item.fibonacci_zone)"
+            class="text-[9px] px-2 py-0.5 rounded-md font-semibold border"
+          >
+            Fib: {{ formatFibZone(item.fibonacci_zone, item.fibonacci_retracement) }}
+          </span>
+          <span
+            v-if="item.exhaustion_score !== null && item.exhaustion_score !== undefined"
+            class="text-[9px] px-2 py-0.5 rounded-md font-semibold bg-indigo-500/10 border border-indigo-500/20 text-indigo-300"
+          >
+            Skor Jenuh: {{ item.exhaustion_score }}/100
+          </span>
+          <span
+            v-if="item.funding_note"
+            class="text-[9px] px-2 py-0.5 rounded-md font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-300"
+          >
+            Funding Aktif
+          </span>
+        </div>
+
         <!-- Senior-Friendly Simple View -->
         <div v-if="simpleMode" class="space-y-2 mt-2 pt-2 border-t border-border/50 text-xs">
           <!-- Summary Title -->
@@ -60,6 +83,22 @@
           <p class="text-slate-300 text-[11px] leading-relaxed bg-slate-950/60 p-2.5 rounded-lg border border-border/40">
             {{ item.plain_reason }}
           </p>
+
+          <!-- Quantitative Insights (Fibonacci / Wave / Funding) -->
+          <div v-if="item.fibonacci_note || item.wave_note || item.funding_note" class="space-y-1 bg-slate-950/40 p-2 rounded-lg border border-border/30 text-[11px]">
+            <div v-if="item.fibonacci_note" class="flex items-start space-x-1.5 text-sky-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-sky-400 mt-1 shrink-0"></span>
+              <span>{{ item.fibonacci_note }}</span>
+            </div>
+            <div v-if="item.wave_note" class="flex items-start space-x-1.5 text-indigo-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1 shrink-0"></span>
+              <span>{{ item.wave_note }}</span>
+            </div>
+            <div v-if="item.funding_note" class="flex items-start space-x-1.5 text-amber-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1 shrink-0"></span>
+              <span>{{ item.funding_note }}</span>
+            </div>
+          </div>
 
           <!-- Capital Note -->
           <div class="flex items-center space-x-1.5 text-[10px] text-slate-400">
@@ -88,6 +127,12 @@
           <div v-if="item.raw_risk" class="text-slate-400">
             <span class="text-slate-500 font-sans">Risk Factors:</span> {{ item.raw_risk }}
           </div>
+          <div v-if="item.fibonacci_note" class="text-sky-300">
+            <span class="text-slate-500 font-sans">Fibonacci:</span> {{ item.fibonacci_note }}
+          </div>
+          <div v-if="item.wave_note" class="text-indigo-300">
+            <span class="text-slate-500 font-sans">Wave / Exhaustion:</span> {{ item.wave_note }}
+          </div>
           <div class="text-slate-400 flex items-center space-x-3 pt-1 border-t border-border/30">
             <span>Lot: {{ item.quantity }}</span>
             <span>Notional: ${{ Number(item.notional || 0).toFixed(2) }}</span>
@@ -114,5 +159,27 @@ function badgeClass(color) {
   if (color === 'emerald') return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
   if (color === 'amber') return 'bg-amber-500/15 text-amber-400 border-amber-500/30'
   return 'bg-slate-800 text-slate-400 border-border'
+}
+
+function fibBadgeClass(zone) {
+  if (zone === 'PEAK_EXHAUSTION' || zone === 'BLOW_OFF_EXTENSION') {
+    return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+  }
+  if (zone === 'SHALLOW_PULLBACK') {
+    return 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+  }
+  if (zone === 'EXTENDED_DUMP') {
+    return 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+  }
+  return 'bg-slate-800 text-slate-300 border-border'
+}
+
+function formatFibZone(zone, retracement) {
+  const pct = (retracement !== null && retracement !== undefined) ? Math.round(Number(retracement) * 100) : 0
+  if (zone === 'PEAK_EXHAUSTION') return `Puncak Jenuh (${pct}%)`
+  if (zone === 'BLOW_OFF_EXTENSION') return 'Blow-Off Top'
+  if (zone === 'SHALLOW_PULLBACK') return `Koreksi Awal (${pct}%)`
+  if (zone === 'EXTENDED_DUMP') return `Sudah Turun (${pct}%)`
+  return `${zone || 'Normal'} (${pct}%)`
 }
 </script>

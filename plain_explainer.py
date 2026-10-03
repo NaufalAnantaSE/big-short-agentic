@@ -1,5 +1,5 @@
-"""Plain Explainer module: Translates quantitative AI signals and market data
-into clear, reassuring, senior-friendly Indonesian language for older clients and non-technical users.
+"""Plain Explainer module: Translates quantitative AI signals, Fibonacci retracements,
+impulse exhaustion, and market data into clear, reassuring, senior-friendly Indonesian language.
 """
 
 from typing import Dict, Any, Optional
@@ -19,7 +19,11 @@ def humanize_ai_decision(
     order_id: Optional[str] = None,
     dry_run: bool = False,
     sizing_valid: bool = True,
-    is_quota_full: bool = False
+    is_quota_full: bool = False,
+    fibonacci: Optional[Dict[str, Any]] = None,
+    impulse_wave: Optional[Dict[str, Any]] = None,
+    funding_sentiment: Optional[str] = None,
+    funding_rate: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Produces a senior-friendly narrative card with high legibility and clear, empathetic explanations.
@@ -77,12 +81,63 @@ def humanize_ai_decision(
     else:
         market_notes.append("Likuiditas pasar cukup baik dan transaksi berlangsung lancar.")
 
-    # 3. Simple explanation of technical evidence
+    # 3. Fibonacci & Impulse Wave Explanations
+    fib_note = ""
+    if fibonacci and fibonacci.get("valid"):
+        zone = fibonacci.get("zone")
+        ratio = float(fibonacci.get("retracement_ratio", 0.0) or 0.0)
+        pct = max(0.0, min(100.0, ratio * 100.0))
+        if zone == "PEAK_EXHAUSTION":
+            fib_note = f"Analisa Fibonacci: Berada di puncak kenaikan (koreksi baru {pct:.1f}%), peluang posisi jual paling optimal."
+        elif zone == "BLOW_OFF_EXTENSION":
+            fib_note = "Analisa Fibonacci: Lonjakan ekstrem menembus batas atas (Blow-Off Top), jenuh beli sangat tinggi."
+        elif zone == "SHALLOW_PULLBACK":
+            fib_note = f"Analisa Fibonacci: Penolakan harga awal terkonfirmasi (koreksi {pct:.1f}% dari puncak)."
+        elif zone == "EXTENDED_DUMP":
+            fib_note = f"Analisa Fibonacci: Harga sudah anjlok terlalu jauh ({pct:.1f}%), sistem mencegah jual di dasar."
+        else:
+            fib_note = f"Analisa Fibonacci: Berada di zona tengah gelombang ({pct:.1f}%)."
+        market_notes.append(fib_note)
+
+    wave_note = ""
+    if impulse_wave and impulse_wave.get("valid"):
+        bars = impulse_wave.get("consecutive_bull_bars", 0)
+        fade = impulse_wave.get("volume_fade", False)
+        confluent = impulse_wave.get("confluent_rejection", False)
+        score = impulse_wave.get("exhaustion_score", 0)
+        parts = []
+        if bars >= 3:
+            parts.append(f"{bars} candle naik beruntun")
+        if fade:
+            parts.append("volume beli melemah")
+        if confluent:
+            parts.append("ekor penolakan atas jelas")
+        if parts:
+            wave_note = f"Struktur Gelombang: {', '.join(parts)} (Skor Jenuh Pasar: {score}/100)."
+            market_notes.append(wave_note)
+
+    funding_note = ""
+    if funding_sentiment:
+        fr_pct = (funding_rate * 100) if funding_rate is not None else None
+        fr_str = f" ({fr_pct:+.3f}%)" if fr_pct is not None else ""
+        if funding_sentiment == "EXTREME_LONG_CROWD":
+            funding_note = f"Biaya Pasar (Funding Rate): Posisi Long sangat padat{fr_str}, pembeli membayar fee ke Short."
+            market_notes.append(funding_note)
+        elif funding_sentiment == "MODERATE_LONG_CROWD":
+            funding_note = f"Biaya Pasar (Funding Rate): Posisi Long aktif membayar fee{fr_str}."
+            market_notes.append(funding_note)
+        elif funding_sentiment == "EXTREME_SHORT_CROWD_SQUEEZE_RISK":
+            funding_note = f"Biaya Pasar (Funding Rate): Waspada short squeeze{fr_str}."
+            market_notes.append(funding_note)
+
+    # 4. Simple explanation of technical evidence
     plain_reason = ""
     evidence_lower = (evidence or "").lower()
     risk_lower = (risk_factors or "").lower()
 
-    if "hard gate" in evidence_lower or "hard_gate" in evidence_lower:
+    if "dump_already_extended" in risk_lower or "extended_dump" in risk_lower:
+        plain_reason = "Harga koin sudah turun jauh dari puncaknya. Sistem menolak membuka posisi jual agar modal Anda tidak terjebak memantul di dasar harga."
+    elif "hard gate" in evidence_lower or "hard_gate" in evidence_lower:
         plain_reason = "Koin ini otomatis disaring oleh sistem keamanan awal karena kriteria dasar pasar (seperti volume transaksi atau stabilitas harga) belum memenuhi syarat ketat."
     elif "exhaustion" in evidence_lower or "buyer dry-up" in evidence_lower or "rejection" in evidence_lower:
         plain_reason = "Grafik menunjukkan bahwa para pembeli besar sudah mulai berhenti membeli dan harga mulai tertahan di atas, menandakan penurunan segera terjadi."
@@ -93,7 +148,7 @@ def humanize_ai_decision(
     else:
         plain_reason = evidence if evidence else "AI telah mengkaji struktur pergerakan koin dan memilih opsi paling berhati-hati."
 
-    # 4. Senior-friendly capital transparency note
+    # 5. Senior-friendly capital transparency note
     est_idr = int(margin_per_pos * 16200)
     capital_note = f"Modal dipakai: ${margin_per_pos:.2f} USDT (sekitar Rp {est_idr:,}). Posisi dikelola secara bertahap tanpa menyentuh saldo simpanan lainnya."
 
@@ -112,5 +167,11 @@ def humanize_ai_decision(
         "market_notes": market_notes,
         "capital_note": capital_note,
         "raw_evidence": evidence,
-        "raw_risk": risk_factors
+        "raw_risk": risk_factors,
+        "fibonacci_note": fib_note,
+        "wave_note": wave_note,
+        "funding_note": funding_note,
+        "fibonacci_zone": fibonacci.get("zone") if fibonacci else None,
+        "fibonacci_retracement": fibonacci.get("retracement_ratio") if fibonacci else None,
+        "exhaustion_score": impulse_wave.get("exhaustion_score") if impulse_wave else None
     }

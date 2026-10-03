@@ -276,6 +276,11 @@ class TenantSessionManager:
             order_id = ev.get("order_id")
             dry_run_flag = bool(ev.get("dry_run", dry_run))
             sizing_valid = bool(sizing.get("is_valid", True))
+            mf = ev.get("market_features", {}) or {}
+            fib = mf.get("fibonacci")
+            imp = mf.get("impulse_wave")
+            f_sent = mf.get("funding_sentiment")
+            fr = mf.get("funding_rate")
             h = humanize_ai_decision(
                 symbol=ev.get("symbol", ""),
                 decision=ev.get("ai_decision", "SKIP"),
@@ -283,15 +288,19 @@ class TenantSessionManager:
                 evidence=ev.get("ai_evidence", ""),
                 risk_factors=ev.get("risk_factors", ""),
                 price=ev.get("price", 0.0),
-                change_24h=ev.get("market_features", {}).get("timeframes", {}).get("15m", {}).get("change_pct", 0.0) or 0.0,
-                spread_pct=ev.get("market_features", {}).get("spread_pct", 0.0) or 0.0,
+                change_24h=mf.get("timeframes", {}).get("15m", {}).get("change_pct", 0.0) or 0.0,
+                spread_pct=mf.get("spread_pct", 0.0) or 0.0,
                 margin_per_pos=orch.current_session.margin_per_pos if orch.current_session else 5.0,
                 leverage=orch.current_session.leverage if orch.current_session else 20,
                 executed=executed,
                 order_id=str(order_id) if order_id else None,
                 dry_run=dry_run_flag,
                 sizing_valid=sizing_valid,
-                is_quota_full=is_quota_full
+                is_quota_full=is_quota_full,
+                fibonacci=fib,
+                impulse_wave=imp,
+                funding_sentiment=f_sent,
+                funding_rate=fr
             )
             # Add execution information
             h["executed"] = executed

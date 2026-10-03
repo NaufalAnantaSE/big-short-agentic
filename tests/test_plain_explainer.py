@@ -93,3 +93,38 @@ def test_humanize_ai_decision_wait_and_skip():
         spread_pct=0.35
     )
     assert skip_res["badge_label"] == "STATUS: DILEWATI"
+
+
+def test_humanize_ai_decision_with_fibonacci_and_wave():
+    res = humanize_ai_decision(
+        symbol="PUMP-USDT",
+        decision="ENTER_SHORT",
+        confidence=85,
+        evidence="Buyer exhaustion wick",
+        risk_factors="",
+        price=1.25,
+        change_24h=25.0,
+        spread_pct=0.04,
+        fibonacci={
+            "valid": True,
+            "zone": "PEAK_EXHAUSTION",
+            "retracement_ratio": 0.05
+        },
+        impulse_wave={
+            "valid": True,
+            "consecutive_bull_bars": 3,
+            "volume_fade": True,
+            "confluent_rejection": True,
+            "exhaustion_score": 85
+        },
+        funding_sentiment="EXTREME_LONG_CROWD",
+        funding_rate=0.0008
+    )
+    assert "Fibonacci" in res["fibonacci_note"]
+    assert "puncak kenaikan" in res["fibonacci_note"]
+    assert "Struktur Gelombang" in res["wave_note"]
+    assert "85/100" in res["wave_note"]
+    assert "Funding Rate" in res["funding_note"]
+    assert res["fibonacci_zone"] == "PEAK_EXHAUSTION"
+    assert res["exhaustion_score"] == 85
+

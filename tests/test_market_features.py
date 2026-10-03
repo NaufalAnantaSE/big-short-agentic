@@ -89,3 +89,50 @@ def test_ai_usage_log_does_not_include_credentials():
     AuditLogger.log_event("AI_USAGE_TEST", {"usage": {"total_tokens": 1}, "api_key": "MUST_NOT_BE_LOGGED"})
     # This test documents the caller contract; credentials are never supplied by production callers.
     assert "MUST_NOT_BE_LOGGED" not in json.dumps({"usage": {"total_tokens": 1}})
+
+
+def test_fibonacci_and_impulse_wave_analysis():
+    from market_features import _fibonacci_analysis, _impulse_wave_analysis
+    candles = [
+        {"open": 10.0, "high": 12.0, "low": 9.8, "close": 11.5, "volume": 100.0, "time": 1000},
+        {"open": 11.5, "high": 15.0, "low": 11.2, "close": 14.8, "volume": 200.0, "time": 2000},
+        {"open": 14.8, "high": 20.0, "low": 14.5, "close": 19.5, "volume": 50.0, "time": 3000},
+    ]
+    # Price near peak (19.5 with high at 20.0) -> peak exhaustion zone
+    fib_near_top = _fibonacci_analysis(candles, current_price=19.5)
+    assert fib_near_top["valid"] is True
+    assert fib_near_top["zone"] in ("PEAK_EXHAUSTION", "SHALLOW_PULLBACK")
+    assert fib_near_top["is_peak_exhaustion"] is True
+    assert fib_near_top["is_dump_extended"] is False
+    assert fib_near_top["fib_0_high"] == 20.0
+    assert fib_near_top["fib_100_low"] == 9.8
+
+    # Price already dumped to 11.0 from 20.0 -> extended dump
+    fib_dumped = _fibonacci_analysis(candles, current_price=11.0)
+    assert fib_dumped["zone"] == "EXTENDED_DUMP"
+    assert fib_dumped["is_dump_extended"] is True
+
+    # Wave analysis: consecutive bull bars and volume fade
+    wave = _impulse_wave_analysis(closed_15m=candles, closed_1h=candles, current_price=19.5)
+    assert wave["valid"] is True
+    assert wave["consecutive_bull_bars"] >= 3
+    assert wave["exhaustion_score"] > 0
+
+
+def test_hard_gate_rejects_extended_dump():
+    base = {
+        "fresh": True,
+        "spread_pct": 0.1,
+        "atr_to_friction": 8.0,
+        "funding_rate": 0.001,
+        "fibonacci": {
+            "valid": True,
+            "is_dump_extended": True,
+            "zone": "EXTENDED_DUMP",
+            "retracement_ratio": 0.85
+        }
+    }
+    ok, reasons = hard_gate(base)
+    assert ok is False
+    assert "dump_already_extended" in reasons
+
