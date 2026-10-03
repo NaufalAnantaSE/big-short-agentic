@@ -1,8 +1,10 @@
 <template>
-  <div class="min-h-screen bg-background text-slate-100 flex flex-col justify-between font-sans selection:bg-sky-500 selection:text-white">
+  <div class="min-h-screen bg-background text-text-main flex flex-col justify-between font-sans selection:bg-sky-500 selection:text-white transition-colors duration-200">
     <!-- Unauthenticated View -->
     <AuthView
       v-if="!token"
+      :is-dark="isDark"
+      @toggle-theme="toggleTheme"
       @auth-success="handleAuthSuccess"
     />
 
@@ -12,7 +14,9 @@
       <Navbar
         :user="user"
         :is-demo="isDemo"
+        :is-dark="isDark"
         :simple-mode="simpleMode"
+        @toggle-theme="toggleTheme"
         @toggle-simple="simpleMode = !simpleMode"
         @open-settings="showApiKeyModal = true"
         @logout="handleLogout"
@@ -24,6 +28,7 @@
         <AdminDashboard
           v-if="user.role === 'admin'"
           :token="token"
+          :is-dark="isDark"
         />
 
         <!-- Render Trader Dashboard if Trader / Client -->
@@ -32,6 +37,7 @@
           :token="token"
           :user="user"
           :is-demo="isDemo"
+          :is-dark="isDark"
           :simple-mode="simpleMode"
           @update-user="handleUserUpdate"
         />
@@ -43,6 +49,7 @@
         :token="token"
         :can-close="user.has_keys"
         :initial-is-demo="isDemo"
+        :is-dark="isDark"
         @close="showApiKeyModal = false"
         @saved="onApiKeySaved"
       />
@@ -65,6 +72,26 @@ const isDemo = ref(user.value.is_demo !== false)
 const simpleMode = ref(true)
 const showApiKeyModal = ref(false)
 
+// Theme Management (Claymorphism Dark / Light)
+const savedTheme = localStorage.getItem('bx_theme')
+const isDark = ref(savedTheme !== 'light') // Default to dark
+
+function applyTheme(dark) {
+  if (dark) {
+    document.documentElement.classList.add('dark')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b0f19')
+  } else {
+    document.documentElement.classList.remove('dark')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#edf2f7')
+  }
+}
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  localStorage.setItem('bx_theme', isDark.value ? 'dark' : 'light')
+  applyTheme(isDark.value)
+}
+
 function handleAuthSuccess(data) {
   token.value = data.token
   user.value = data.user
@@ -74,7 +101,6 @@ function handleAuthSuccess(data) {
 }
 
 function handleLogout() {
-  // Purge all credentials, identity and local storage
   token.value = ''
   user.value = {}
   isDemo.value = true
@@ -114,6 +140,7 @@ async function verifyAuthSession() {
 }
 
 onMounted(() => {
+  applyTheme(isDark.value)
   if (token.value) {
     verifyAuthSession()
   }

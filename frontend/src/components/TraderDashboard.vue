@@ -3,17 +3,17 @@
     <!-- API Missing Warning Banner -->
     <div
       v-if="!user.has_keys"
-      class="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed flex items-start justify-between gap-3 shadow-sm"
+      class="clay-card p-4 bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs leading-relaxed flex items-start justify-between gap-3 shadow-md"
     >
       <div class="space-y-1">
-        <div class="font-bold text-amber-300 text-sm">Hubungkan Akun BingX Anda</div>
-        <p class="text-slate-300 text-[11px]">
+        <div class="font-extrabold text-amber-700 dark:text-amber-300 text-sm">Hubungkan Akun BingX Anda</div>
+        <p class="text-text-muted text-[11px] font-medium">
           Kunci API diperlukan agar bot dapat membaca saldo dan mengeksekusi posisi pada akun BingX Anda.
         </p>
       </div>
       <button
         @click="showApiKeyModal = true"
-        class="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs shrink-0 transition"
+        class="clay-btn bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-3.5 py-2 text-xs shrink-0 shadow-sm"
       >
         Hubungkan
       </button>
