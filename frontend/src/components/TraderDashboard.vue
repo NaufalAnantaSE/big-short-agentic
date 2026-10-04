@@ -19,14 +19,14 @@
       </button>
     </div>
 
-    <!-- 1. Account Summary Card (Saldo & Ekuitas) -->
+    <!-- 1. Account Summary Card (Saldo, Ekuitas & Tombol Sync) -->
     <AccountSummaryCard
       :summary="summary"
       :loading="refreshing"
-      @refresh="fetchAccountSummary"
+      @refresh="syncNow"
     />
 
-    <!-- 2. Bot Operations Control Card (Mulai & Hentikan) -->
+    <!-- 2. Bot Operations Control Card (Mulai & Hentikan & Auto-Scan) -->
     <BotControlCard
       :session-state="summary.session"
       :token="token"
@@ -34,6 +34,7 @@
       @session-started="onSessionStarted"
       @session-stopped="onSessionStopped"
       @cycle-done="onCycleDone"
+      @sync-requested="syncNow"
     />
 
     <!-- 3. Candidate Radar (Analisa AI Ramah Lansia & Detail) -->
@@ -46,7 +47,7 @@
     <ActivePositionsCard
       :positions="summary.active_positions || []"
       :token="token"
-      @position-closed="fetchAccountSummary"
+      @position-closed="syncNow"
     />
 
     <!-- API Key Settings Modal -->
@@ -62,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import ApiKeyOnboardingModal from './ApiKeyOnboardingModal.vue'
 import AccountSummaryCard from './AccountSummaryCard.vue'
 import BotControlCard from './BotControlCard.vue'
@@ -73,10 +74,11 @@ const props = defineProps({
   token: String,
   user: Object,
   isDemo: Boolean,
-  simpleMode: Boolean
+  simpleMode: Boolean,
+  syncTrigger: Number
 })
 
-const emit = defineEmits(['update-user'])
+const emit = defineEmits(['update-user', 'sync-status-changed'])
 
 const summary = ref({
   balance: 0,
@@ -84,15 +86,44 @@ const summary = ref({
   used_margin: 0,
   asset: 'VST',
   active_positions: [],
-  session: { status: 'IDLE', filled_count: 0, quota: 10 }
+  session: { status: 'IDLE', filled_count: 0, quota: 10, auto_scan: true, next_scan_in: 0 },
+  last_sync_at: null
 })
 const evaluations = ref([])
 const refreshing = ref(false)
 const showApiKeyModal = ref(false)
+let pollTimer = null
 
-async function fetchAccountSummary() {
-  if (!props.token || !props.user.has_keys) return
+async function syncNow() {
+  if (!props.token || !props.user.has_keys || refreshing.value) return
   refreshing.value = true
+  emit('sync-status-changed', true)
+  try {
+    const res = await fetch('/api/account/sync', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${props.token}` }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      summary.value = data
+      if (Array.isArray(data.latest_evaluations) && data.latest_evaluations.length > 0) {
+        evaluations.value = data.latest_evaluations
+      }
+    }
+  } catch (err) {
+    console.error('Failed to sync BingX data:', err)
+  } finally {
+    refreshing.value = false
+    emit('sync-status-changed', false)
+  }
+}
+
+// Background poller for dynamic real-time data
+async function pollSummary() {
+  if (!props.token || !props.user.has_keys || refreshing.value) return
+  // Don't poll if document is hidden to conserve battery/bandwidth
+  if (typeof document !== 'undefined' && document.hidden) return
+
   try {
     const res = await fetch('/api/account/summary', {
       headers: { 'Authorization': `Bearer ${props.token}` }
@@ -100,18 +131,19 @@ async function fetchAccountSummary() {
     const data = await res.json()
     if (res.ok) {
       summary.value = data
+      if (Array.isArray(data.latest_evaluations) && data.latest_evaluations.length > 0) {
+        evaluations.value = data.latest_evaluations
+      }
     }
   } catch (err) {
-    console.error('Failed to fetch summary:', err)
-  } finally {
-    refreshing.value = false
+    // Silent fail on background poll
   }
 }
 
 function onApiKeySaved(payload) {
   showApiKeyModal.value = false
   emit('update-user', { has_keys: true, is_demo: payload.isDemo })
-  fetchAccountSummary()
+  syncNow()
 }
 
 function onSessionStarted(sess) {
@@ -120,27 +152,41 @@ function onSessionStarted(sess) {
     ...sess,
     status: 'ACTIVE_SEARCHING'
   }
+  syncNow()
 }
 
 function onSessionStopped(res) {
   summary.value.session = {
     ...summary.value.session,
-    status: 'TERMINATED'
+    status: 'TERMINATED',
+    auto_scan: false
   }
+  syncNow()
 }
 
 function onCycleDone(cycleData) {
-  if (cycleData.evaluations) {
+  if (cycleData && cycleData.evaluations) {
     evaluations.value = cycleData.evaluations
   }
-  fetchAccountSummary()
+  syncNow()
 }
 
 onMounted(() => {
   if (props.user.has_keys) {
-    fetchAccountSummary()
+    syncNow()
   } else {
     showApiKeyModal.value = true
   }
+
+  // Dynamic Polling: fetches account and bot state dynamically every 5 seconds
+  pollTimer = setInterval(pollSummary, 5000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
+
+defineExpose({
+  syncNow
 })
 </script>

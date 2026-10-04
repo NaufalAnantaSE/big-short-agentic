@@ -36,6 +36,14 @@ app.add_middleware(
 base_config = load_config()
 tenant_manager = TenantSessionManager(base_config)
 
+@app.on_event("startup")
+def startup_event():
+    tenant_manager.start_background_worker()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    tenant_manager.stop_background_worker()
+
 # Request & Response models
 class RegisterRequest(BaseModel):
     username: str
@@ -57,10 +65,18 @@ class SessionStartRequest(BaseModel):
     quota: int = Field(default=10, ge=1, le=50)
     mode: str = Field(default="PUMP_GAINERS")
     is_live: bool = False
+    auto_scan: bool = True
+    scan_interval: int = Field(default=60, ge=10, le=3600)
 
 class SessionUpdateRequest(BaseModel):
     margin_per_pos: Optional[float] = Field(None, ge=1.0, le=500.0)
     quota: Optional[int] = Field(None, ge=1, le=50)
+    auto_scan: Optional[bool] = None
+    scan_interval: Optional[int] = Field(None, ge=10, le=3600)
+
+class AutoScanToggleRequest(BaseModel):
+    auto_scan: bool
+    scan_interval: Optional[int] = Field(None, ge=10, le=3600)
 
 class CycleRequest(BaseModel):
     dry_run: bool = False
@@ -193,6 +209,22 @@ def get_account_summary(user: Dict[str, Any] = Depends(require_trader)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Gagal mengambil saldo dari BingX: {str(exc)}")
 
+@app.post("/api/account/sync")
+def sync_account_endpoint(user: Dict[str, Any] = Depends(require_trader)):
+    """Explicit on-demand sync with BingX account balances and open positions."""
+    has_keys = bool(user.get("encrypted_api_key") and user.get("encrypted_secret_key"))
+    if not has_keys:
+        return {
+            "has_keys": False,
+            "message": "Silakan masukkan API Key dan Secret Key BingX Anda terlebih dahulu."
+        }
+    try:
+        summary = tenant_manager.get_account_summary(user["id"])
+        summary["has_keys"] = True
+        return summary
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Gagal sinkronisasi data dari BingX: {str(exc)}")
+
 @app.post("/api/session/start")
 def start_session(req: SessionStartRequest, user: Dict[str, Any] = Depends(require_trader)):
     has_keys = bool(user.get("encrypted_api_key") and user.get("encrypted_secret_key"))
@@ -206,7 +238,9 @@ def start_session(req: SessionStartRequest, user: Dict[str, Any] = Depends(requi
             leverage=req.leverage,
             quota=req.quota,
             mode=req.mode,
-            is_live=req.is_live
+            is_live=req.is_live,
+            auto_scan=req.auto_scan,
+            scan_interval=req.scan_interval
         )
         return {"success": True, "session": res}
     except Exception as exc:
@@ -218,11 +252,26 @@ def update_session(req: SessionUpdateRequest, user: Dict[str, Any] = Depends(req
         res = tenant_manager.update_session_params(
             user_id=user["id"],
             margin_per_pos=req.margin_per_pos,
-            quota=req.quota
+            quota=req.quota,
+            auto_scan=req.auto_scan,
+            scan_interval=req.scan_interval
         )
         return {"success": True, "session": res}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/api/session/auto-scan")
+def toggle_auto_scan_endpoint(req: AutoScanToggleRequest, user: Dict[str, Any] = Depends(require_trader)):
+    """Toggles autonomous background scanning and updates scan interval."""
+    try:
+        res = tenant_manager.set_user_auto_scan(
+            user_id=user["id"],
+            auto_scan=req.auto_scan,
+            scan_interval=req.scan_interval
+        )
+        return {"success": True, "session": res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @app.post("/api/session/stop")
 def stop_session(user: Dict[str, Any] = Depends(require_trader)):

@@ -50,7 +50,7 @@
         <label class="block text-[11px] text-text-subtle font-bold mb-1">Pilihan Semesta Koin</label>
         <select
           v-model="universeMode"
-          :disabled="isActive"
+          :disabled="isSessionRunning"
           class="clay-input w-full h-11 px-3 text-xs text-text-main font-semibold"
         >
           <option value="PUMP_GAINERS">PUMP_GAINERS (Semua Altcoin yang Sedang Melonjak)</option>
@@ -59,9 +59,26 @@
       </div>
     </div>
 
+    <!-- Active Status Callout if Quota Reached -->
+    <div
+      v-if="isSessionRunning && isExhausted"
+      class="clay-inset p-3 mb-3 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-xs text-amber-900 dark:text-amber-200 leading-relaxed font-medium"
+    >
+      <div class="font-extrabold text-amber-700 dark:text-amber-300 mb-0.5 flex items-center space-x-1.5">
+        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>Kuota Penuh ({{ currentFilled }}/{{ quota }}) — Bot Siaga di Server</span>
+      </div>
+      Bot tetap aktif di latar belakang server. Begitu Anda menutup salah satu posisi cuan di bawah, bot akan otomatis memindai dan membuka koin baru.
+    </div>
+
     <!-- Big Action Buttons (Touch Target >= 48px) -->
     <div class="space-y-2.5">
-      <div v-if="!isActive" class="grid grid-cols-1 gap-2">
+      <!-- State 1: IDLE / TERMINATED -> Start Button -->
+      <div v-if="!isSessionRunning" class="grid grid-cols-1 gap-2">
         <button
           @click="startSession"
           :disabled="actionLoading"
@@ -70,32 +87,46 @@
           <svg class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <polygon points="5 3 19 12 5 21 5 3"></polygon>
           </svg>
-          <span>{{ actionLoading ? 'Menyiapkan...' : 'Mulai Bot Otomatis' }}</span>
+          <span>{{ actionLoading ? 'Menyiapkan Engine...' : 'Mulai Bot Otomatis' }}</span>
         </button>
       </div>
 
+      <!-- State 2: RUNNING (ACTIVE_SEARCHING or EXHAUSTED) -> Controls -->
       <div v-else class="space-y-2.5">
-        <!-- Auto-Scan Periodic Toggle -->
+        <!-- Persistent Auto-Scan Toggle (Server Daemon) -->
         <div class="clay-inset flex items-center justify-between p-2.5 text-xs">
           <label class="flex items-center space-x-2 text-text-main cursor-pointer select-none">
-            <input type="checkbox" v-model="autoScan" class="rounded border-border text-sky-600 focus:ring-0" />
-            <span class="text-[11px] font-bold">Auto-Pindai Otomatis (Tiap 60s)</span>
+            <input
+              type="checkbox"
+              v-model="autoScan"
+              @change="onAutoScanToggle"
+              class="rounded border-border text-sky-600 focus:ring-0"
+            />
+            <span class="text-[11px] font-bold">Auto-Pindai Server Persisten</span>
           </label>
-          <span v-if="autoScan" class="text-[10px] text-sky-700 dark:text-sky-300 font-mono font-bold bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
-            {{ autoScanCountdown }}s lagi
-          </span>
+          <div class="flex items-center space-x-1.5">
+            <span v-if="autoScan && !isExhausted" class="text-[10px] text-sky-700 dark:text-sky-300 font-mono font-bold bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
+              {{ countdown }}s lagi
+            </span>
+            <span v-else-if="autoScan && isExhausted" class="text-[10px] text-amber-700 dark:text-amber-300 font-mono font-bold bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full">
+              Siaga Kuota
+            </span>
+            <span v-else class="text-[10px] text-text-subtle font-mono font-bold bg-slate-500/15 border border-border px-2 py-0.5 rounded-full">
+              Mati
+            </span>
+          </div>
         </div>
 
         <button
           @click="triggerCycle"
-          :disabled="cycleLoading"
+          :disabled="cycleLoading || isScanning"
           class="clay-btn clay-btn-sky w-full h-12 text-sm space-x-2"
         >
-          <svg :class="{'animate-spin': cycleLoading}" class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <svg :class="{'animate-spin': cycleLoading || isScanning}" class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
-          <span>{{ cycleLoading ? 'AI Sedang Menganalisis Koin...' : 'Pindai & Analisa Pasar Sekarang' }}</span>
+          <span>{{ (cycleLoading || isScanning) ? 'AI Sedang Menganalisis Pasar...' : 'Pindai & Analisa Pasar Sekarang' }}</span>
         </button>
 
         <button
@@ -114,7 +145,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   sessionState: Object,
@@ -122,19 +153,28 @@ const props = defineProps({
   isLiveMode: Boolean
 })
 
-const emit = defineEmits(['session-started', 'session-stopped', 'cycle-done'])
+const emit = defineEmits(['session-started', 'session-stopped', 'cycle-done', 'sync-requested'])
 
 const margin = ref(5.0)
 const quota = ref(10)
 const universeMode = ref('PUMP_GAINERS')
 const actionLoading = ref(false)
 const cycleLoading = ref(false)
-const autoScan = ref(false)
-const autoScanCountdown = ref(60)
+const autoScan = ref(true)
+const countdown = ref(60)
 let timerId = null
 
-const isActive = computed(() => {
-  return props.sessionState?.status === 'ACTIVE_SEARCHING'
+const isSessionRunning = computed(() => {
+  const st = props.sessionState?.status
+  return st === 'ACTIVE_SEARCHING' || st === 'EXHAUSTED'
+})
+
+const isExhausted = computed(() => {
+  return props.sessionState?.status === 'EXHAUSTED'
+})
+
+const isScanning = computed(() => {
+  return Boolean(props.sessionState?.is_scanning)
 })
 
 const currentFilled = computed(() => {
@@ -142,12 +182,35 @@ const currentFilled = computed(() => {
 })
 
 watch(() => props.sessionState, (newSess) => {
-  if (newSess?.margin_per_pos) margin.value = Number(newSess.margin_per_pos)
-  if (newSess?.quota) quota.value = Number(newSess.quota)
-}, { immediate: true })
+  if (!newSess) return
+  if (newSess.margin_per_pos !== undefined) margin.value = Number(newSess.margin_per_pos)
+  if (newSess.quota !== undefined) quota.value = Number(newSess.quota)
+  if (newSess.auto_scan !== undefined) autoScan.value = Boolean(newSess.auto_scan)
+  if (typeof newSess.next_scan_in === 'number') {
+    countdown.value = newSess.next_scan_in
+  }
+}, { immediate: true, deep: true })
+
+// Smooth 1-second countdown ticker
+onMounted(() => {
+  timerId = setInterval(() => {
+    if (isSessionRunning.value && autoScan.value && !isExhausted.value) {
+      if (countdown.value > 0) {
+        countdown.value -= 1
+      } else {
+        countdown.value = props.sessionState?.scan_interval || 60
+        emit('sync-requested')
+      }
+    }
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (timerId) clearInterval(timerId)
+})
 
 async function onParamChange() {
-  if (!isActive.value) return
+  if (!isSessionRunning.value) return
   try {
     await fetch('/api/session/update', {
       method: 'POST',
@@ -160,8 +223,27 @@ async function onParamChange() {
         quota: quota.value
       })
     })
+    emit('sync-requested')
   } catch (err) {
     console.error('Failed to update session parameter:', err)
+  }
+}
+
+async function onAutoScanToggle() {
+  try {
+    await fetch('/api/session/auto-scan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${props.token}`
+      },
+      body: JSON.stringify({
+        auto_scan: autoScan.value
+      })
+    })
+    emit('sync-requested')
+  } catch (err) {
+    console.error('Failed to toggle auto scan:', err)
   }
 }
 
@@ -169,30 +251,6 @@ function formatIDR(usdt) {
   if (!usdt) return '0'
   return Math.round(Number(usdt) * 16200).toLocaleString('id-ID')
 }
-
-// Auto-scan timer ticker
-watch([isActive, autoScan], ([active, auto]) => {
-  if (timerId) {
-    clearInterval(timerId)
-    timerId = null
-  }
-
-  if (active && auto) {
-    autoScanCountdown.value = 60
-    timerId = setInterval(() => {
-      if (cycleLoading.value) return
-      autoScanCountdown.value -= 1
-      if (autoScanCountdown.value <= 0) {
-        autoScanCountdown.value = 60
-        triggerCycle()
-      }
-    }, 1000)
-  }
-})
-
-onUnmounted(() => {
-  if (timerId) clearInterval(timerId)
-})
 
 async function startSession() {
   actionLoading.value = true
@@ -208,16 +266,16 @@ async function startSession() {
         leverage: 20,
         quota: quota.value,
         mode: universeMode.value,
-        is_live: props.isLiveMode
+        is_live: props.isLiveMode,
+        auto_scan: true,
+        scan_interval: 60
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Gagal memulai sesi.')
-    emit('session-started', data.session)
-
-    // Langsung aktifkan mode auto-scan dan eksekusi cycle pemindaian pertama secara instan
     autoScan.value = true
-    await triggerCycle()
+    emit('session-started', data.session)
+    emit('sync-requested')
   } catch (err) {
     alert(err.message)
   } finally {
@@ -227,7 +285,6 @@ async function startSession() {
 
 async function stopSession() {
   actionLoading.value = true
-  autoScan.value = false
   try {
     const res = await fetch('/api/session/stop', {
       method: 'POST',
@@ -238,6 +295,7 @@ async function stopSession() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Gagal menghentikan sesi.')
     emit('session-stopped', data.result)
+    emit('sync-requested')
   } catch (err) {
     alert(err.message)
   } finally {
@@ -246,7 +304,6 @@ async function stopSession() {
 }
 
 async function triggerCycle() {
-  if (cycleLoading.value) return
   cycleLoading.value = true
   try {
     const res = await fetch('/api/session/cycle', {
@@ -256,14 +313,14 @@ async function triggerCycle() {
         'Authorization': `Bearer ${props.token}`
       },
       body: JSON.stringify({
-        dry_run: false // Selalu eksekusi riil ke BingX API (baik VST Demo maupun Live)
+        dry_run: !props.isLiveMode
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Gagal menjalankan pemindaian.')
     emit('cycle-done', data.data)
   } catch (err) {
-    console.error(err)
+    alert(err.message)
   } finally {
     cycleLoading.value = false
   }

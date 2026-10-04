@@ -40,6 +40,10 @@ def init_db():
             filled_count INTEGER NOT NULL DEFAULT 0,
             mode TEXT NOT NULL DEFAULT 'PUMP_GAINERS',
             is_live INTEGER NOT NULL DEFAULT 0,
+            auto_scan INTEGER NOT NULL DEFAULT 1,
+            scan_interval INTEGER NOT NULL DEFAULT 60,
+            last_scan_at REAL,
+            latest_evaluations TEXT DEFAULT '[]',
             started_at REAL NOT NULL,
             stopped_at REAL,
             FOREIGN KEY (user_id) REFERENCES users (id)
@@ -72,6 +76,20 @@ def init_db():
             created_at TEXT NOT NULL
         );
         """)
+
+        # Safe schema evolution for existing tables
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(sessions)")
+        existing_cols = {r[1] for r in cursor.fetchall()}
+        if "auto_scan" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN auto_scan INTEGER NOT NULL DEFAULT 1")
+        if "scan_interval" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN scan_interval INTEGER NOT NULL DEFAULT 60")
+        if "last_scan_at" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN last_scan_at REAL")
+        if "latest_evaluations" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN latest_evaluations TEXT DEFAULT '[]'")
+        conn.commit()
 
         # Ensure default admin account exists
         cursor = conn.cursor()
@@ -161,13 +179,35 @@ def list_all_users() -> List[Dict[str, Any]]:
         return [dict(r) for r in cursor.fetchall()]
 
 # Session persistence
-def save_session(session_id: str, user_id: int, status: str, margin: float, leverage: int, quota: int, filled_count: int, mode: str, is_live: bool, started_at: float):
+def save_session(
+    session_id: str,
+    user_id: int,
+    status: str,
+    margin: float,
+    leverage: int,
+    quota: int,
+    filled_count: int,
+    mode: str,
+    is_live: bool,
+    started_at: float,
+    auto_scan: bool = True,
+    scan_interval: int = 60,
+    last_scan_at: Optional[float] = None,
+    latest_evaluations: str = "[]"
+):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-        INSERT OR REPLACE INTO sessions (session_id, user_id, status, margin_per_pos, leverage, quota, filled_count, mode, is_live, started_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, user_id, status, margin, leverage, quota, filled_count, mode, 1 if is_live else 0, started_at))
+        INSERT OR REPLACE INTO sessions (
+            session_id, user_id, status, margin_per_pos, leverage, quota, filled_count,
+            mode, is_live, started_at, auto_scan, scan_interval, last_scan_at, latest_evaluations
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id, user_id, status, margin, leverage, quota, filled_count,
+            mode, 1 if is_live else 0, started_at, 1 if auto_scan else 0, scan_interval,
+            last_scan_at, latest_evaluations
+        ))
         conn.commit()
 
 def update_session_status(session_id: str, status: str, filled_count: int, stopped_at: Optional[float] = None):
@@ -181,7 +221,14 @@ def update_session_status(session_id: str, status: str, filled_count: int, stopp
                            (status, filled_count, session_id))
         conn.commit()
 
-def update_session_params(session_id: str, margin_per_pos: Optional[float] = None, quota: Optional[int] = None, status: Optional[str] = None):
+def update_session_params(
+    session_id: str,
+    margin_per_pos: Optional[float] = None,
+    quota: Optional[int] = None,
+    status: Optional[str] = None,
+    auto_scan: Optional[bool] = None,
+    scan_interval: Optional[int] = None
+):
     with get_db() as conn:
         cursor = conn.cursor()
         fields = []
@@ -195,10 +242,44 @@ def update_session_params(session_id: str, margin_per_pos: Optional[float] = Non
         if status is not None:
             fields.append("status = ?")
             vals.append(status)
+        if auto_scan is not None:
+            fields.append("auto_scan = ?")
+            vals.append(1 if auto_scan else 0)
+        if scan_interval is not None:
+            fields.append("scan_interval = ?")
+            vals.append(int(scan_interval))
         if fields:
             vals.append(session_id)
             cursor.execute(f"UPDATE sessions SET {', '.join(fields)} WHERE session_id = ?", tuple(vals))
             conn.commit()
+
+def update_session_auto_scan(session_id: str, auto_scan: bool, scan_interval: Optional[int] = None):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if scan_interval is not None:
+            cursor.execute("UPDATE sessions SET auto_scan = ?, scan_interval = ? WHERE session_id = ?",
+                           (1 if auto_scan else 0, int(scan_interval), session_id))
+        else:
+            cursor.execute("UPDATE sessions SET auto_scan = ? WHERE session_id = ?",
+                           (1 if auto_scan else 0, session_id))
+        conn.commit()
+
+def save_latest_evaluations(session_id: str, evaluations_json: str, last_scan_at: float):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE sessions SET latest_evaluations = ?, last_scan_at = ? WHERE session_id = ?",
+                       (evaluations_json, last_scan_at, session_id))
+        conn.commit()
+
+def get_active_searching_sessions() -> List[Dict[str, Any]]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM sessions
+            WHERE status IN ('ACTIVE_SEARCHING', 'EXHAUSTED') AND auto_scan = 1
+            ORDER BY started_at ASC
+        """)
+        return [dict(r) for r in cursor.fetchall()]
 
 def get_latest_user_session(user_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:

@@ -7,23 +7,35 @@
           {{ statusBadgeLabel }}
         </span>
       </div>
-      <button
-        @click="$emit('refresh')"
-        :disabled="loading"
-        class="text-xs text-sky-600 dark:text-sky-400 hover:underline font-bold flex items-center space-x-1"
-      >
-        <svg :class="{'animate-spin': loading}" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="23 4 23 10 17 10"></polyline>
-          <polyline points="1 20 1 14 7 14"></polyline>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-        </svg>
-        <span>Perbarui</span>
-      </button>
+      <div class="flex items-center space-x-2">
+        <span v-if="summary.last_sync_at" class="text-[10px] text-text-subtle font-mono hidden sm:inline">
+          {{ formatTime(summary.last_sync_at) }}
+        </span>
+        <button
+          @click="$emit('refresh')"
+          :disabled="loading"
+          class="text-xs text-sky-600 dark:text-sky-400 hover:underline font-bold flex items-center space-x-1"
+          title="Sinkronkan saldo dan posisi dengan BingX"
+        >
+          <svg :class="{'animate-spin': loading}" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span>{{ loading ? 'Sinkron...' : 'Sync Akun' }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- Main Balance Display (Large for high legibility) -->
     <div class="mb-4">
-      <div class="text-[11px] font-semibold text-text-subtle">Total Saldo Aktif</div>
+      <div class="flex items-center justify-between">
+        <div class="text-[11px] font-semibold text-text-subtle">Total Saldo Aktif</div>
+        <div class="flex items-center space-x-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+          <span>Dinamis Real-Time</span>
+        </div>
+      </div>
       <div class="flex items-baseline space-x-2 mt-0.5">
         <span class="text-2xl font-extrabold text-text-main tracking-tight font-mono">
           {{ formatNumber(summary.balance) }}
@@ -64,7 +76,8 @@ const props = defineProps({
       equity: 0,
       used_margin: 0,
       asset: 'VST',
-      session: { status: 'IDLE' }
+      session: { status: 'IDLE' },
+      last_sync_at: null
     })
   },
   loading: Boolean
@@ -81,6 +94,12 @@ function formatIDR(usdt) {
   if (!usdt) return '0'
   const val = Number(usdt) * 16200
   return Math.round(val).toLocaleString('id-ID')
+}
+
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 const statusBadgeLabel = computed(() => {

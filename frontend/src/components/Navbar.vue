@@ -40,6 +40,21 @@
 
       <!-- Action Controls -->
       <div class="flex items-center space-x-1.5">
+        <!-- Trader only: On-Demand Dynamic Sync Button -->
+        <button
+          v-if="user?.role !== 'admin'"
+          @click="$emit('sync-now')"
+          :disabled="isSyncing"
+          class="p-2 rounded-xl border border-border clay-btn clay-btn-slate text-text-muted transition flex items-center justify-center"
+          title="Sinkronkan Data dengan BingX Sekarang"
+        >
+          <svg :class="{'animate-spin text-sky-600 dark:text-sky-400': isSyncing}" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+
         <!-- Dark / Light Theme Toggle -->
         <button
           @click="$emit('toggle-theme')"
@@ -115,7 +130,8 @@ defineProps({
   user: Object,
   isDemo: Boolean,
   isDark: Boolean,
-  simpleMode: Boolean
+  simpleMode: Boolean,
+  isSyncing: Boolean
 })
-defineEmits(['toggle-theme', 'toggle-simple', 'open-settings', 'logout'])
+defineEmits(['toggle-theme', 'toggle-simple', 'open-settings', 'logout', 'sync-now'])
 </script>

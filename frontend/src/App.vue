@@ -16,10 +16,12 @@
         :is-demo="isDemo"
         :is-dark="isDark"
         :simple-mode="simpleMode"
+        :is-syncing="isSyncing"
         @toggle-theme="toggleTheme"
         @toggle-simple="simpleMode = !simpleMode"
         @open-settings="showApiKeyModal = true"
         @logout="handleLogout"
+        @sync-now="onSyncNow"
       />
 
       <!-- Main Content Scroll Area -->
@@ -34,12 +36,14 @@
         <!-- Render Trader Dashboard if Trader / Client -->
         <TraderDashboard
           v-else
+          ref="traderDashboardRef"
           :token="token"
           :user="user"
           :is-demo="isDemo"
           :is-dark="isDark"
           :simple-mode="simpleMode"
           @update-user="handleUserUpdate"
+          @sync-status-changed="onSyncStatusChanged"
         />
       </main>
 
@@ -71,6 +75,8 @@ const user = ref(JSON.parse(localStorage.getItem('bx_user') || 'null') || {})
 const isDemo = ref(user.value.is_demo !== false)
 const simpleMode = ref(true)
 const showApiKeyModal = ref(false)
+const traderDashboardRef = ref(null)
+const isSyncing = ref(false)
 
 // Theme Management (Claymorphism Dark / Light)
 const savedTheme = localStorage.getItem('bx_theme')
@@ -118,6 +124,16 @@ function handleUserUpdate(patch) {
 function onApiKeySaved(payload) {
   showApiKeyModal.value = false
   handleUserUpdate({ has_keys: true, is_demo: payload.isDemo })
+}
+
+function onSyncNow() {
+  if (traderDashboardRef.value && traderDashboardRef.value.syncNow) {
+    traderDashboardRef.value.syncNow()
+  }
+}
+
+function onSyncStatusChanged(val) {
+  isSyncing.value = Boolean(val)
 }
 
 async function verifyAuthSession() {
