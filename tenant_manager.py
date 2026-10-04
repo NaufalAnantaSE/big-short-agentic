@@ -626,6 +626,9 @@ class TenantSessionManager:
             
             # Record order to DB if executed
             if executed and order_id:
+                is_long_order = (ev.get("ai_decision") == "ENTER_LONG")
+                pos_side = "LONG" if is_long_order else "SHORT"
+                ord_side = "BUY" if is_long_order else "SELL"
                 db.record_order(
                     user_id=user_id,
                     session_id=orch.current_session.session_id,
@@ -636,7 +639,9 @@ class TenantSessionManager:
                     leverage=orch.current_session.leverage,
                     client_order_id=ev.get("client_order_id", ""),
                     order_id=str(order_id),
-                    status="FILLED"
+                    status="FILLED",
+                    side=ord_side,
+                    position_side=pos_side
                 )
 
             humanized_evals.append(h)

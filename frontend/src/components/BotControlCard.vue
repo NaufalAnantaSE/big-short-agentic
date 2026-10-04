@@ -58,14 +58,30 @@
         </select>
       </div>
 
-      <!-- Direction & Strategy Mode Contract (Phase 1) -->
+      <!-- Direction Mode Selector -->
+      <div>
+        <label class="block text-[11px] text-text-subtle font-bold mb-1">Arah Trading (Strategi AI)</label>
+        <select
+          v-model="directionMode"
+          :disabled="isSessionRunning"
+          class="clay-input w-full h-11 px-3 text-xs text-text-main font-semibold"
+        >
+          <option value="SHORT">SHORT ONLY (Koin Pucuk / Jenuh Pembeli)</option>
+          <option value="LONG">LONG ONLY (Pantulan Support / Retest Sehat)</option>
+          <option value="BOTH">DUA ARAH (Long & Short Fleksibel Sesuai AI)</option>
+        </select>
+      </div>
+
+      <!-- Direction & Strategy Mode Badge -->
       <div class="clay-inset p-2.5 flex items-center justify-between text-[11px]">
         <div class="space-y-0.5">
-          <span class="block text-[10px] font-bold text-text-subtle uppercase tracking-wider">Arah Strategi</span>
-          <span class="font-extrabold text-sky-700 dark:text-sky-300">SHORT ONLY (Pump Exhaustion)</span>
+          <span class="block text-[10px] font-bold text-text-subtle uppercase tracking-wider">Arah Aktif</span>
+          <span class="font-extrabold text-sky-700 dark:text-sky-300">
+            {{ directionMode === 'BOTH' ? 'DUA ARAH (Long & Short)' : (directionMode === 'LONG' ? 'LONG ONLY (Beli Pantulan)' : 'SHORT ONLY (Jual Pucuk)') }}
+          </span>
         </div>
         <span class="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
-          Fase 1: Kontrak Terkunci
+          {{ directionMode }}
         </span>
       </div>
     </div>
@@ -172,6 +188,7 @@ const emit = defineEmits(['session-started', 'session-stopped', 'cycle-done', 's
 const margin = ref(5.0)
 const quota = ref(10)
 const universeMode = ref('PUMP_GAINERS')
+const directionMode = ref('SHORT')
 const actionLoading = ref(false)
 const cycleLoading = ref(false)
 const autoScan = ref(true)
@@ -200,6 +217,7 @@ watch(() => props.sessionState, (newSess) => {
   if (newSess.margin_per_pos !== undefined) margin.value = Number(newSess.margin_per_pos)
   if (newSess.quota !== undefined) quota.value = Number(newSess.quota)
   if (newSess.auto_scan !== undefined) autoScan.value = Boolean(newSess.auto_scan)
+  if (newSess.direction_mode) directionMode.value = newSess.direction_mode
   if (typeof newSess.next_scan_in === 'number') {
     countdown.value = newSess.next_scan_in
   }
@@ -282,7 +300,7 @@ async function startSession() {
         is_live: props.isLiveMode,
         environment: props.isLiveMode ? 'BINGX_LIVE' : 'BINGX_VST',
         execution_mode: props.isLiveMode ? 'EXCHANGE_LIVE' : 'EXCHANGE_DEMO',
-        direction_mode: 'SHORT',
+        direction_mode: directionMode.value,
         exit_policy: 'MANUAL_ONLY',
         auto_scan: true,
         scan_interval: 60

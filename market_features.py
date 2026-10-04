@@ -121,6 +121,9 @@ def _fibonacci_analysis(closed_rows: List[Dict[str, float]], current_price: floa
 
     is_peak_exhaustion = zone in ("BLOW_OFF_EXTENSION", "PEAK_EXHAUSTION", "SHALLOW_PULLBACK")
     is_dump_extended = zone == "EXTENDED_DUMP"
+    is_golden_pullback = (0.35 <= retracement_ratio <= 0.68)
+    is_long_fomo_danger = zone in ("BLOW_OFF_EXTENSION", "PEAK_EXHAUSTION") or retracement_ratio <= 0.05
+    is_long_breakdown_danger = retracement_ratio >= 0.786
 
     return {
         "valid": True,
@@ -140,6 +143,9 @@ def _fibonacci_analysis(closed_rows: List[Dict[str, float]], current_price: floa
         "distance_to_high_pct": round(((swing_high - current_price) / current_price) * 100, 2),
         "is_peak_exhaustion": is_peak_exhaustion,
         "is_dump_extended": is_dump_extended,
+        "is_golden_pullback": is_golden_pullback,
+        "is_long_fomo_danger": is_long_fomo_danger,
+        "is_long_breakdown_danger": is_long_breakdown_danger,
     }
 
 
@@ -176,12 +182,15 @@ def _impulse_wave_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[D
     last_15m = closed_15m[-1]
     range_15m = max(last_15m["high"] - last_15m["low"], 1e-12)
     wick_15m = (last_15m["high"] - max(last_15m["open"], last_15m["close"])) / range_15m
+    lower_wick_15m = (min(last_15m["open"], last_15m["close"]) - last_15m["low"]) / range_15m
 
     wick_1h = 0.0
+    lower_wick_1h = 0.0
     if closed_1h:
         last_1h = closed_1h[-1]
         range_1h = max(last_1h["high"] - last_1h["low"], 1e-12)
         wick_1h = (last_1h["high"] - max(last_1h["open"], last_1h["close"])) / range_1h
+        lower_wick_1h = (min(last_1h["open"], last_1h["close"]) - last_1h["low"]) / range_1h
 
     confluent_rejection = (wick_15m >= 0.40) or (wick_15m >= 0.25 and wick_1h >= 0.25)
 
@@ -201,9 +210,11 @@ def _impulse_wave_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[D
         "valid": True,
         "consecutive_bull_bars": bull_count,
         "volume_fade": volume_fade,
-        "confluent_rejection": confluent_rejection,
+        "confluent_rejection": (wick_15m >= 0.25 and wick_1h >= 0.20),
         "wick_15m": round(wick_15m, 3),
         "wick_1h": round(wick_1h, 3),
+        "lower_wick_15m": round(lower_wick_15m, 3),
+        "lower_wick_1h": round(lower_wick_1h, 3),
         "exhaustion_score": min(score, 100)
     }
 

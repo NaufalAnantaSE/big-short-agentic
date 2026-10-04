@@ -112,7 +112,12 @@ class SessionOrchestrator:
         effective_dry_run = dry_run or is_local_paper
 
         # Step 1: Scan candidates
-        candidates = self.scanner.scan_universe(mode=self.config.universe_mode, limit_candidates=limit_candidates)
+        current_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
+        candidates = self.scanner.scan_universe(
+            mode=self.config.universe_mode,
+            limit_candidates=limit_candidates,
+            direction=current_dir
+        )
         if not candidates:
             return {"status": "NO_CANDIDATES", "message": "No eligible unoccupied pairs found."}
 
@@ -213,8 +218,22 @@ class SessionOrchestrator:
                 "order_id": None
             }
 
-            if ai_res.decision == "ENTER_SHORT" and sizing.is_valid:
-                client_order_id = f"bx_short_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            # Determine trade direction permissions
+            is_short_intent = (ai_res.decision == "ENTER_SHORT")
+            is_long_intent = (ai_res.decision == "ENTER_LONG")
+            session_dir = getattr(self.current_session, "direction_mode", "SHORT")
+
+            direction_allowed = (
+                (session_dir == "BOTH") or
+                (session_dir == "SHORT" and is_short_intent) or
+                (session_dir == "LONG" and is_long_intent)
+            )
+
+            if (is_short_intent or is_long_intent) and direction_allowed and sizing.is_valid:
+                target_pos_side = "LONG" if is_long_intent else "SHORT"
+                target_order_side = "BUY" if is_long_intent else "SELL"
+                prefix = "bx_long" if is_long_intent else "bx_short"
+                client_order_id = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
                 
                 if effective_dry_run:
                     tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
@@ -223,31 +242,30 @@ class SessionOrchestrator:
                     execution_report["client_order_id"] = client_order_id
                     execution_report["message"] = (
                         f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
-                        f"Submit SHORT MARKET order: {sizing.quantity} {cand.symbol}"
+                        f"Submit {target_pos_side} MARKET order: {sizing.quantity} {cand.symbol}"
                     )
                     self.current_session.filled_count += 1
                     self.current_session.executed_symbols.append(cand.symbol)
                 else:
                     try:
                         # Pre-Flight Leverage Assertion (MANDATORY GATE):
-                        # Exchange defaults new pairs to 5x. We must set target leverage before placing the order.
                         self.client.set_leverage(
                             symbol=cand.symbol,
                             leverage=sizing.effective_leverage,
-                            side="SHORT"
+                            side=target_pos_side
                         )
                         execution_report["leverage_set"] = sizing.effective_leverage
                         AuditLogger.log_leverage_adjustment(
                             symbol=cand.symbol,
                             leverage=sizing.effective_leverage,
-                            side="SHORT",
+                            side=target_pos_side,
                             session_id=self.current_session.session_id
                         )
 
                         order_res = self.client.place_order(
                             symbol=cand.symbol,
-                            side="SELL",
-                            position_side="SHORT",
+                            side=target_order_side,
+                            position_side=target_pos_side,
                             order_type="MARKET",
                             quantity=sizing.quantity,
                             client_order_id=client_order_id
@@ -263,8 +281,8 @@ class SessionOrchestrator:
 
                         AuditLogger.log_order_submission(
                             symbol=cand.symbol,
-                            side="SELL",
-                            position_side="SHORT",
+                            side=target_order_side,
+                            position_side=target_pos_side,
                             order_type="MARKET",
                             quantity=sizing.quantity,
                             price=cand.last_price,

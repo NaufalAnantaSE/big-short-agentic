@@ -50,9 +50,12 @@ def normalize_ai_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "SHORT": "ENTER_SHORT",
         "SELL": "ENTER_SHORT",
         "ENTER": "ENTER_SHORT",
+        "LONG": "ENTER_LONG",
+        "BUY": "ENTER_LONG",
+        "ENTER_LONG": "ENTER_LONG",
     }
     decision = decision_map.get(decision, decision)
-    if decision not in {"ENTER_SHORT", "WAIT", "SKIP"}:
+    if decision not in {"ENTER_SHORT", "ENTER_LONG", "WAIT", "SKIP"}:
         raise ValueError(f"unsupported decision: {decision or 'missing'}")
     raw = parsed.get("confidence", parsed.get("confidence_score", 0))
     if isinstance(raw, str):
@@ -117,7 +120,7 @@ def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
 
 class AIEvaluationResult(BaseModel):
     symbol: str
-    decision: str = Field(description="ENTER_SHORT, WAIT, or SKIP")
+    decision: str = Field(description="ENTER_SHORT, ENTER_LONG, WAIT, or SKIP")
     confidence: int = Field(default=0, ge=0, le=100)
     setup_type: str = "NONE"
     key_evidence: str = ""
@@ -175,7 +178,7 @@ class AIEvaluator:
                 last_parsed = parsed
             decision = last_parsed["decision"]
             confidence = int(last_parsed.get("confidence", 0))
-            if decision == "ENTER_SHORT" and confidence < 70:
+            if decision in ("ENTER_SHORT", "ENTER_LONG") and confidence < 70:
                 decision = "WAIT"
             return AIEvaluationResult(
                 symbol=symbol,
@@ -268,8 +271,8 @@ class AIEvaluator:
             usage = data.get("usage", {}) if isinstance(data.get("usage", {}), dict) else {}
             decision = parsed["decision"]
             confidence = parsed["confidence"]
-            # Quality gate: minimum 70% confidence for ENTER_SHORT
-            if decision == "ENTER_SHORT" and confidence < 70:
+            # Quality gate: minimum 70% confidence for ENTER_SHORT and ENTER_LONG
+            if decision in ("ENTER_SHORT", "ENTER_LONG") and confidence < 70:
                 decision = "WAIT"
 
             return AIEvaluationResult(

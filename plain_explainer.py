@@ -56,6 +56,30 @@ def humanize_ai_decision(
             badge_label = "EKSEKUSI: SIAP BUKA POSISI"
             summary_title = f"Koin {clean_sym} Siap Dijual (Potensi Penurunan Terbuka)"
             action_advice = "AI mendeteksi lonjakan harga telah mencapai batas jenuh pembeli. Posisi jual (Short) siap dieksekusi."
+    elif decision == "ENTER_LONG":
+        badge_color = "sky"
+        if executed:
+            badge_label = "ORDER LONG TERPASANG"
+            summary_title = f"Posisi Beli Koin {clean_sym} Berhasil Dibuka"
+            action_advice = f"AI mendeteksi pantulan sehat pada area support dan posisi beli (Long) telah berhasil dieksekusi ke bursa BingX (Order ID: {order_id or '-'})."
+        elif dry_run:
+            badge_label = "SIMULASI LONG TERBUKA"
+            summary_title = f"Simulasi Long Koin {clean_sym} Aktif"
+            action_advice = "Koin memenuhi kriteria pantulan beli dan simulasi eksekusi berhasil dicatat dalam mode dry-run."
+        elif is_quota_full:
+            badge_color = "slate"
+            badge_label = "TERTAHAN: KUOTA PENUH"
+            summary_title = f"Koin {clean_sym} Siap Dibeli (Tertahan Kuota)"
+            action_advice = "Koin ini sangat ideal untuk posisi beli (Long), namun kuota maksimal posisi akun Anda saat ini sudah penuh."
+        elif not sizing_valid:
+            badge_color = "amber"
+            badge_label = "TERLEWAT: MINIMAL BURSA"
+            summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
+            action_advice = "Koin ini memiliki sinyal beli (Long) yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
+        else:
+            badge_label = "EKSEKUSI: SIAP BUKA POSISI LONG"
+            summary_title = f"Koin {clean_sym} Siap Dibeli (Potensi Kenaikan Lanjutan)"
+            action_advice = "AI mendeteksi area pantulan sehat dan posisi beli (Long) siap dieksekusi."
     elif decision == "WAIT":
         badge_color = "amber"
         badge_label = "STATUS: MEMANTAU (TUNGGU MOMEN)"

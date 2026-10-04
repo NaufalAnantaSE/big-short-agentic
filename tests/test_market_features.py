@@ -60,7 +60,7 @@ def test_provider_schema_normalizer_accepts_common_aliases():
 def test_provider_schema_normalizer_rejects_unknown_decision():
     from ai_evaluator import normalize_ai_payload
     try:
-        normalize_ai_payload({"decision": "BUY", "confidence": 99})
+        normalize_ai_payload({"decision": "FOMO_MOON", "confidence": 99})
     except ValueError as exc:
         assert "decision" in str(exc)
     else:

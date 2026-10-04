@@ -60,7 +60,8 @@ class MarketScanner:
         self,
         mode: Optional[str] = None,
         min_pump_pct: Optional[float] = None,
-        limit_candidates: int = 5
+        limit_candidates: int = 5,
+        direction: str = "SHORT"
     ) -> List[CandidatePair]:
         """
         Scans perpetual contracts based on selected universe mode:
@@ -122,8 +123,16 @@ class MarketScanner:
                 continue
 
             # Filter out crazy launch anomalies (>500% usually indicates new pair re-denomination in demo)
-            if price_change > 500.0 or price_change < min_pump:
-                continue
+            dir_norm = direction.upper()
+            if dir_norm == "LONG":
+                if price_change > 40.0 or price_change < 0.5:
+                    continue
+            elif dir_norm == "BOTH":
+                if price_change > 500.0 or price_change < 0.5:
+                    continue
+            else:  # SHORT
+                if price_change > 500.0 or price_change < min_pump:
+                    continue
 
             if volume_usdt < self.config.min_volume_24h_usdt:
                 continue

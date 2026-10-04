@@ -105,7 +105,7 @@ def test_ai_rejects_unsupported_decision(mocker):
     mock_resp = mocker.MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
-        "choices": [{"message": {"content": '{"symbol":"DOGE-USDT","decision":"BUY","confidence":99}'}}]
+        "choices": [{"message": {"content": '{"symbol":"DOGE-USDT","decision":"FOMO_MOON","confidence":99}'}}]
     }
     mocker.patch.object(evaluator.client, "post", return_value=mock_resp)
 
