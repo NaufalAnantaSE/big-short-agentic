@@ -105,8 +105,11 @@
             <span class="text-[11px] font-bold">Auto-Pindai Server Persisten</span>
           </label>
           <div class="flex items-center space-x-1.5">
-            <span v-if="autoScan && !isExhausted" class="text-[10px] text-sky-700 dark:text-sky-300 font-mono font-bold bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
-              {{ countdown }}s lagi
+            <span v-if="autoScan && isScanning" class="text-[10px] text-emerald-700 dark:text-emerald-300 font-mono font-bold bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+              Sedang memindai
+            </span>
+            <span v-else-if="autoScan && !isExhausted" class="text-[10px] text-sky-700 dark:text-sky-300 font-mono font-bold bg-sky-500/15 border border-sky-500/30 px-2 py-0.5 rounded-full">
+              {{ countdown > 0 ? `${countdown}s lagi` : 'Menunggu server' }}
             </span>
             <span v-else-if="autoScan && isExhausted" class="text-[10px] text-amber-700 dark:text-amber-300 font-mono font-bold bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full">
               Siaga Kuota
@@ -191,15 +194,14 @@ watch(() => props.sessionState, (newSess) => {
   }
 }, { immediate: true, deep: true })
 
-// Smooth 1-second countdown ticker
+// Presentation-only countdown. The backend daemon owns scan scheduling.
+// Never trigger a sync/cycle from this timer: doing so caused a zero-second
+// feedback loop where every tick requested another account refresh.
 onMounted(() => {
   timerId = setInterval(() => {
     if (isSessionRunning.value && autoScan.value && !isExhausted.value) {
       if (countdown.value > 0) {
         countdown.value -= 1
-      } else {
-        countdown.value = props.sessionState?.scan_interval || 60
-        emit('sync-requested')
       }
     }
   }, 1000)

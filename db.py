@@ -271,6 +271,22 @@ def save_latest_evaluations(session_id: str, evaluations_json: str, last_scan_at
                        (evaluations_json, last_scan_at, session_id))
         conn.commit()
 
+def claim_due_session(session_id: str, now: Optional[float] = None) -> bool:
+    """Atomically reserve one scan slot for a persisted session."""
+    now = float(now if now is not None else time.time())
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE sessions
+            SET last_scan_at = ?
+            WHERE session_id = ?
+              AND auto_scan = 1
+              AND status IN ('ACTIVE_SEARCHING', 'EXHAUSTED')
+              AND (last_scan_at IS NULL OR last_scan_at <= (? - scan_interval))
+        """, (now, session_id, now))
+        conn.commit()
+        return cursor.rowcount == 1
+
 def get_active_searching_sessions() -> List[Dict[str, Any]]:
     with get_db() as conn:
         cursor = conn.cursor()

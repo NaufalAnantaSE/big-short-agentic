@@ -122,7 +122,7 @@ async function syncNow() {
 async function pollSummary() {
   if (!props.token || !props.user.has_keys || refreshing.value) return
   // Don't poll if document is hidden to conserve battery/bandwidth
-  if (typeof document !== 'undefined' && document.hidden) return
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
 
   try {
     const res = await fetch('/api/account/summary', {
@@ -178,8 +178,9 @@ onMounted(() => {
     showApiKeyModal.value = true
   }
 
-  // Dynamic Polling: fetches account and bot state dynamically every 5 seconds
-  pollTimer = setInterval(pollSummary, 5000)
+  // Dynamic Polling: controlled account/state refresh every 10 seconds.
+  // Scanning itself is server-owned and never triggered by this timer.
+  pollTimer = setInterval(pollSummary, 10000)
 })
 
 onUnmounted(() => {

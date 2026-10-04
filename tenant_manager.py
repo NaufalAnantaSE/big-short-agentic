@@ -27,6 +27,7 @@ class TenantSessionManager:
         self._latest_evaluations: Dict[int, list] = {}
         # Concurrency guard: track which user_id is currently executing a cycle
         self._currently_scanning: Set[int] = set()
+        self._scan_state_lock = threading.Lock()
         self._last_scan_times: Dict[int, float] = {}
         
         # Autonomous background worker state
@@ -68,13 +69,14 @@ class TenantSessionManager:
         now = time.time()
         for sess in active_sessions:
             user_id = sess["user_id"]
-            if user_id in self._currently_scanning:
-                continue
-
-            last_scan = sess.get("last_scan_at") or self._last_scan_times.get(user_id) or 0.0
-            interval = int(sess.get("scan_interval") or 60)
-            if (now - last_scan) < interval:
-                continue
+            with self._scan_state_lock:
+                if user_id in self._currently_scanning:
+                    continue
+                # Reserve before spawning the thread. Checking here and
+                # adding inside the worker is racy on a fast scheduler tick.
+                if not db.claim_due_session(sess["session_id"], now=now):
+                    continue
+                self._currently_scanning.add(user_id)
 
             # Spawn scheduled cycle in a background thread so one user does not block others
             t = threading.Thread(
@@ -86,9 +88,6 @@ class TenantSessionManager:
             t.start()
 
     def _execute_scheduled_cycle(self, user_id: int, sess: Dict[str, Any]):
-        if user_id in self._currently_scanning:
-            return
-        self._currently_scanning.add(user_id)
         try:
             # 1. Sync positions first
             client = self.get_client(user_id)
@@ -127,7 +126,8 @@ class TenantSessionManager:
             AuditLogger.log_event("BACKGROUND_SCAN_ERROR", {"user_id": user_id, "error": str(exc)}, session_id=sess.get("session_id"))
         finally:
             self._last_scan_times[user_id] = time.time()
-            self._currently_scanning.discard(user_id)
+            with self._scan_state_lock:
+                self._currently_scanning.discard(user_id)
 
     def _build_tenant_config(self, user_id: int) -> AppConfig:
         user = db.get_user_by_id(user_id)
@@ -353,11 +353,11 @@ class TenantSessionManager:
             latest_evaluations="[]"
         )
 
-        # Trigger immediate first cycle asynchronously if auto_scan is enabled
+        # Reserve the first scan before spawning it. Without this claim, the
+        # daemon could see the newly inserted session at the same time and
+        # launch a duplicate first cycle.
         if auto_scan:
-            threading.Thread(
-                target=self._execute_scheduled_cycle,
-                args=(user_id, {
+            initial_session = {
                     "session_id": session_state.session_id,
                     "status": session_state.status,
                     "margin_per_pos": margin_per_pos,
@@ -368,10 +368,16 @@ class TenantSessionManager:
                     "started_at": session_state.started_at,
                     "auto_scan": 1,
                     "scan_interval": scan_interval
-                }),
-                daemon=True,
-                name=f"Initial-Scan-User-{user_id}"
-            ).start()
+            }
+            if db.claim_due_session(session_state.session_id, now=now):
+                with self._scan_state_lock:
+                    self._currently_scanning.add(user_id)
+                threading.Thread(
+                    target=self._execute_scheduled_cycle,
+                    args=(user_id, initial_session),
+                    daemon=True,
+                    name=f"Initial-Scan-User-{user_id}"
+                ).start()
 
         return {
             "session_id": session_state.session_id,
@@ -460,14 +466,18 @@ class TenantSessionManager:
 
         db.update_session_auto_scan(latest["session_id"], auto_scan, scan_interval)
         
-        # If toggled ON, kick off a cycle immediately if due
+        # If toggled ON, kick off one claimed cycle immediately if due.
         if auto_scan and user_id not in self._currently_scanning:
-            threading.Thread(
-                target=self._execute_scheduled_cycle,
-                args=(user_id, {**latest, "auto_scan": 1}),
-                daemon=True,
-                name=f"Manual-Trigger-Scan-{user_id}"
-            ).start()
+            now = time.time()
+            if db.claim_due_session(latest["session_id"], now=now):
+                with self._scan_state_lock:
+                    self._currently_scanning.add(user_id)
+                threading.Thread(
+                    target=self._execute_scheduled_cycle,
+                    args=(user_id, {**latest, "auto_scan": 1}),
+                    daemon=True,
+                    name=f"Manual-Trigger-Scan-{user_id}"
+                ).start()
 
         return {
             "session_id": latest["session_id"],
