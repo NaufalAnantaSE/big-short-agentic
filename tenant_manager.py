@@ -103,6 +103,10 @@ class TenantSessionManager:
                     margin_per_pos=sess["margin_per_pos"],
                     leverage=sess["leverage"],
                     quota=quota,
+                    environment=sess.get("environment", "BINGX_VST"),
+                    execution_mode=sess.get("execution_mode", "EXCHANGE_DEMO"),
+                    direction_mode=sess.get("direction_mode", "SHORT"),
+                    exit_policy=sess.get("exit_policy", "MANUAL_ONLY"),
                     filled_count=active_count,
                     started_at=sess["started_at"]
                 )
@@ -239,6 +243,10 @@ class TenantSessionManager:
         auto_scan = True
         scan_interval = 60
         last_scan_at = None
+        environment = "BINGX_VST"
+        execution_mode = "EXCHANGE_DEMO"
+        direction_mode = "SHORT"
+        exit_policy = "MANUAL_ONLY"
 
         if current_sess:
             current_sess.filled_count = active_count
@@ -251,6 +259,10 @@ class TenantSessionManager:
             elif current_sess.status == "EXHAUSTED" and active_count < quota:
                 current_sess.status = "ACTIVE_SEARCHING"
             current_status = current_sess.status
+            environment = current_sess.environment
+            execution_mode = current_sess.execution_mode
+            direction_mode = current_sess.direction_mode
+            exit_policy = current_sess.exit_policy
             db.update_session_status(current_sess.session_id, current_status, active_count)
         elif latest_db_sess:
             sess_id = latest_db_sess["session_id"]
@@ -258,6 +270,10 @@ class TenantSessionManager:
             margin_per_pos = latest_db_sess["margin_per_pos"]
             leverage = latest_db_sess["leverage"]
             current_status = latest_db_sess["status"]
+            environment = latest_db_sess.get("environment", "BINGX_VST")
+            execution_mode = latest_db_sess.get("execution_mode", "EXCHANGE_DEMO")
+            direction_mode = latest_db_sess.get("direction_mode", "SHORT")
+            exit_policy = latest_db_sess.get("exit_policy", "MANUAL_ONLY")
             if current_status in ("ACTIVE_SEARCHING", "EXHAUSTED"):
                 if active_count >= quota:
                     current_status = "EXHAUSTED"
@@ -297,6 +313,10 @@ class TenantSessionManager:
             "filled_count": active_count,
             "margin_per_pos": margin_per_pos,
             "leverage": leverage,
+            "environment": environment,
+            "execution_mode": execution_mode,
+            "direction_mode": direction_mode,
+            "exit_policy": exit_policy,
             "auto_scan": auto_scan,
             "scan_interval": scan_interval,
             "last_scan_at": last_scan_at,
@@ -328,11 +348,23 @@ class TenantSessionManager:
         mode: str = "PUMP_GAINERS",
         is_live: bool = False,
         auto_scan: bool = True,
-        scan_interval: int = 60
+        scan_interval: int = 60,
+        environment: str = "BINGX_VST",
+        execution_mode: str = "EXCHANGE_DEMO",
+        direction_mode: str = "SHORT",
+        exit_policy: str = "MANUAL_ONLY"
     ) -> Dict[str, Any]:
         """Initializes and persists a new trading session for this user."""
         orch = self.get_orchestrator(user_id)
-        session_state = orch.start_session(margin_per_pos=margin_per_pos, leverage=leverage, quota=quota)
+        session_state = orch.start_session(
+            margin_per_pos=margin_per_pos,
+            leverage=leverage,
+            quota=quota,
+            environment=environment,
+            execution_mode=execution_mode,
+            direction_mode=direction_mode,
+            exit_policy=exit_policy
+        )
         
         now = time.time()
         # Persist to database
@@ -350,7 +382,11 @@ class TenantSessionManager:
             auto_scan=auto_scan,
             scan_interval=scan_interval,
             last_scan_at=None,
-            latest_evaluations="[]"
+            latest_evaluations="[]",
+            environment=environment,
+            execution_mode=execution_mode,
+            direction_mode=direction_mode,
+            exit_policy=exit_policy
         )
 
         # Reserve the first scan before spawning it. Without this claim, the
@@ -387,6 +423,10 @@ class TenantSessionManager:
             "quota": quota,
             "mode": mode,
             "is_live": is_live,
+            "environment": environment,
+            "execution_mode": execution_mode,
+            "direction_mode": direction_mode,
+            "exit_policy": exit_policy,
             "auto_scan": auto_scan,
             "scan_interval": scan_interval
         }
@@ -410,6 +450,10 @@ class TenantSessionManager:
                     margin_per_pos=latest["margin_per_pos"],
                     leverage=latest["leverage"],
                     quota=latest["quota"],
+                    environment=latest.get("environment", "BINGX_VST"),
+                    execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
+                    direction_mode=latest.get("direction_mode", "SHORT"),
+                    exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
                     filled_count=latest["filled_count"],
                     started_at=latest["started_at"]
                 )
@@ -517,6 +561,10 @@ class TenantSessionManager:
                     margin_per_pos=latest["margin_per_pos"],
                     leverage=latest["leverage"],
                     quota=latest["quota"],
+                    environment=latest.get("environment", "BINGX_VST"),
+                    execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
+                    direction_mode=latest.get("direction_mode", "SHORT"),
+                    exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
                     filled_count=latest["filled_count"],
                     started_at=latest["started_at"]
                 )

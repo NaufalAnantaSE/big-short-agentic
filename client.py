@@ -155,10 +155,19 @@ class BingXClient:
         Submits an order to BingX Swap V2.
         Enforces positionSide='SHORT' and side='SELL' for short-only entry agent in Hedge mode.
         """
+        norm_side = side.upper()
+        norm_pos_side = position_side.upper()
+        if norm_pos_side == "SHORT" and norm_side != "SELL":
+            raise ValueError(f"Invalid order pairing: To open SHORT, side must be SELL (got side='{side}', position_side='{position_side}')")
+        if norm_pos_side == "LONG" and norm_side != "BUY":
+            raise ValueError(f"Invalid order pairing: To open LONG, side must be BUY (got side='{side}', position_side='{position_side}')")
+        if norm_pos_side not in ("SHORT", "LONG", "BOTH"):
+            raise ValueError(f"Invalid position_side: '{position_side}'")
+
         params = {
             "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
+            "side": norm_side,
+            "positionSide": norm_pos_side,
             "type": order_type,
             "quantity": quantity,
             "clientOrderId": client_order_id.lower()[:40],

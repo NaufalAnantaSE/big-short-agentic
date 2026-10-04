@@ -57,6 +57,17 @@
           <option value="MEME_ONLY">MEME_ONLY (Khusus Memecoin Populer Saja)</option>
         </select>
       </div>
+
+      <!-- Direction & Strategy Mode Contract (Phase 1) -->
+      <div class="clay-inset p-2.5 flex items-center justify-between text-[11px]">
+        <div class="space-y-0.5">
+          <span class="block text-[10px] font-bold text-text-subtle uppercase tracking-wider">Arah Strategi</span>
+          <span class="font-extrabold text-sky-700 dark:text-sky-300">SHORT ONLY (Pump Exhaustion)</span>
+        </div>
+        <span class="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
+          Fase 1: Kontrak Terkunci
+        </span>
+      </div>
     </div>
 
     <!-- Active Status Callout if Quota Reached -->
@@ -269,6 +280,10 @@ async function startSession() {
         quota: quota.value,
         mode: universeMode.value,
         is_live: props.isLiveMode,
+        environment: props.isLiveMode ? 'BINGX_LIVE' : 'BINGX_VST',
+        execution_mode: props.isLiveMode ? 'EXCHANGE_LIVE' : 'EXCHANGE_DEMO',
+        direction_mode: 'SHORT',
+        exit_policy: 'MANUAL_ONLY',
         auto_scan: true,
         scan_interval: 60
       })

@@ -42,6 +42,10 @@ def init_db():
             is_live INTEGER NOT NULL DEFAULT 0,
             auto_scan INTEGER NOT NULL DEFAULT 1,
             scan_interval INTEGER NOT NULL DEFAULT 60,
+            environment TEXT NOT NULL DEFAULT 'BINGX_VST',
+            execution_mode TEXT NOT NULL DEFAULT 'EXCHANGE_DEMO',
+            direction_mode TEXT NOT NULL DEFAULT 'SHORT',
+            exit_policy TEXT NOT NULL DEFAULT 'MANUAL_ONLY',
             last_scan_at REAL,
             latest_evaluations TEXT DEFAULT '[]',
             started_at REAL NOT NULL,
@@ -89,6 +93,14 @@ def init_db():
             cursor.execute("ALTER TABLE sessions ADD COLUMN last_scan_at REAL")
         if "latest_evaluations" not in existing_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN latest_evaluations TEXT DEFAULT '[]'")
+        if "environment" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN environment TEXT NOT NULL DEFAULT 'BINGX_VST'")
+        if "execution_mode" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'EXCHANGE_DEMO'")
+        if "direction_mode" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN direction_mode TEXT NOT NULL DEFAULT 'SHORT'")
+        if "exit_policy" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN exit_policy TEXT NOT NULL DEFAULT 'MANUAL_ONLY'")
         conn.commit()
 
         # Ensure default admin account exists
@@ -193,20 +205,26 @@ def save_session(
     auto_scan: bool = True,
     scan_interval: int = 60,
     last_scan_at: Optional[float] = None,
-    latest_evaluations: str = "[]"
+    latest_evaluations: str = "[]",
+    environment: str = "BINGX_VST",
+    execution_mode: str = "EXCHANGE_DEMO",
+    direction_mode: str = "SHORT",
+    exit_policy: str = "MANUAL_ONLY"
 ):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
         INSERT OR REPLACE INTO sessions (
             session_id, user_id, status, margin_per_pos, leverage, quota, filled_count,
-            mode, is_live, started_at, auto_scan, scan_interval, last_scan_at, latest_evaluations
+            mode, is_live, started_at, auto_scan, scan_interval, last_scan_at, latest_evaluations,
+            environment, execution_mode, direction_mode, exit_policy
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id, user_id, status, margin, leverage, quota, filled_count,
             mode, 1 if is_live else 0, started_at, 1 if auto_scan else 0, scan_interval,
-            last_scan_at, latest_evaluations
+            last_scan_at, latest_evaluations,
+            environment, execution_mode, direction_mode, exit_policy
         ))
         conn.commit()
 
@@ -304,14 +322,27 @@ def get_latest_user_session(user_id: int) -> Optional[Dict[str, Any]]:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-def record_order(user_id: int, session_id: str, symbol: str, quantity: float, price: float, notional: float, leverage: int, client_order_id: str, order_id: Optional[str], status: str):
+def record_order(
+    user_id: int,
+    session_id: str,
+    symbol: str,
+    quantity: float,
+    price: float,
+    notional: float,
+    leverage: int,
+    client_order_id: str,
+    order_id: Optional[str],
+    status: str,
+    side: str = "SELL",
+    position_side: str = "SHORT"
+):
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
         INSERT INTO order_records (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, created_at)
-        VALUES (?, ?, ?, 'SELL', 'SHORT', ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, session_id, symbol, quantity, price, notional, leverage, client_order_id, order_id, status, now))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, now))
         conn.commit()
 
 def get_user_orders(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:

@@ -67,6 +67,10 @@ class SessionStartRequest(BaseModel):
     is_live: bool = False
     auto_scan: bool = True
     scan_interval: int = Field(default=60, ge=10, le=3600)
+    environment: str = Field(default="BINGX_VST")
+    execution_mode: str = Field(default="EXCHANGE_DEMO")
+    direction_mode: str = Field(default="SHORT")
+    exit_policy: str = Field(default="MANUAL_ONLY")
 
 class SessionUpdateRequest(BaseModel):
     margin_per_pos: Optional[float] = Field(None, ge=1.0, le=500.0)
@@ -240,7 +244,11 @@ def start_session(req: SessionStartRequest, user: Dict[str, Any] = Depends(requi
             mode=req.mode,
             is_live=req.is_live,
             auto_scan=req.auto_scan,
-            scan_interval=req.scan_interval
+            scan_interval=req.scan_interval,
+            environment=req.environment,
+            execution_mode=req.execution_mode,
+            direction_mode=req.direction_mode,
+            exit_policy=req.exit_policy
         )
         return {"success": True, "session": res}
     except Exception as exc:

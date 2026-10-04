@@ -12,6 +12,7 @@ from scanner import MarketScanner, CandidatePair
 from ai_evaluator import AIEvaluator, AIEvaluationResult
 from audit_logger import AuditLogger
 from market_features import build_candidate_features, hard_gate
+from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, TradeAction
 
 class SessionState(BaseModel):
     session_id: str
@@ -20,6 +21,10 @@ class SessionState(BaseModel):
     leverage: int
     quota: int
     filled_count: int = 0
+    environment: str = Environment.BINGX_VST.value
+    execution_mode: str = ExecutionMode.EXCHANGE_DEMO.value
+    direction_mode: str = DirectionMode.SHORT.value
+    exit_policy: str = ExitPolicy.MANUAL_ONLY.value
     executed_symbols: List[str] = Field(default_factory=list)
     started_at: float = 0.0
 
@@ -36,7 +41,16 @@ class SessionOrchestrator:
         self.ai = AIEvaluator(config)
         self.current_session: Optional[SessionState] = None
 
-    def start_session(self, margin_per_pos: float = 5.0, leverage: int = 20, quota: int = 2) -> SessionState:
+    def start_session(
+        self,
+        margin_per_pos: float = 5.0,
+        leverage: int = 20,
+        quota: int = 2,
+        environment: str = Environment.BINGX_VST.value,
+        execution_mode: str = ExecutionMode.EXCHANGE_DEMO.value,
+        direction_mode: str = DirectionMode.SHORT.value,
+        exit_policy: str = ExitPolicy.MANUAL_ONLY.value
+    ) -> SessionState:
         """Initializes and activates a new entry session."""
         session_id = f"bx_sess_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         self.current_session = SessionState(
@@ -45,12 +59,20 @@ class SessionOrchestrator:
             margin_per_pos=margin_per_pos,
             leverage=min(leverage, 20),
             quota=quota,
+            environment=environment,
+            execution_mode=execution_mode,
+            direction_mode=direction_mode,
+            exit_policy=exit_policy,
             started_at=time.time()
         )
         AuditLogger.log_event("SESSION_START", {
             "margin_per_pos": margin_per_pos,
             "leverage": min(leverage, 20),
-            "quota": quota
+            "quota": quota,
+            "environment": environment,
+            "execution_mode": execution_mode,
+            "direction_mode": direction_mode,
+            "exit_policy": exit_policy
         }, session_id=session_id)
         return self.current_session
 
@@ -85,6 +107,9 @@ class SessionOrchestrator:
         if self.current_session.filled_count >= self.current_session.quota:
             self.current_session.status = "EXHAUSTED"
             return {"status": "QUOTA_EXHAUSTED", "filled": self.current_session.filled_count, "quota": self.current_session.quota}
+
+        is_local_paper = bool(self.current_session and self.current_session.execution_mode == ExecutionMode.LOCAL_PAPER.value)
+        effective_dry_run = dry_run or is_local_paper
 
         # Step 1: Scan candidates
         candidates = self.scanner.scan_universe(mode=self.config.universe_mode, limit_candidates=limit_candidates)
@@ -191,12 +216,13 @@ class SessionOrchestrator:
             if ai_res.decision == "ENTER_SHORT" and sizing.is_valid:
                 client_order_id = f"bx_short_{int(time.time())}_{uuid.uuid4().hex[:6]}"
                 
-                if dry_run:
+                if effective_dry_run:
+                    tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
                     execution_report["executed"] = False
                     execution_report["dry_run"] = True
                     execution_report["client_order_id"] = client_order_id
                     execution_report["message"] = (
-                        f"[DRY-RUN] Pre-flight: Set leverage to {sizing.effective_leverage}x | "
+                        f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
                         f"Submit SHORT MARKET order: {sizing.quantity} {cand.symbol}"
                     )
                     self.current_session.filled_count += 1
