@@ -21,6 +21,15 @@ class SizingResult(BaseModel):
     potential_profit_usdt: float = 0.0
     sl_percent: float = 0.0
     tp_percent: float = 0.0
+    # Real risk expressed as % of margin: sl_pct * leverage. If this exceeds
+    # the margin (minus a maintenance buffer), the position is liquidated
+    # BEFORE the stop-loss can trigger.
+    risk_pct_of_margin: float = 0.0
+
+# Maximum allowed risk as % of margin. The 80% ceiling (not 100%) leaves a
+# buffer for maintenance margin / mark-price deviation so the stop-loss has
+# room to trigger before liquidation.
+MAX_RISK_PCT_OF_MARGIN = 80.0
 
 class SizingError(Exception):
     pass
@@ -189,6 +198,36 @@ class SizingCalculator:
         risk_usdt = float(actual_notional) * (sl_pct / 100.0)
         profit_usdt = float(actual_notional) * (tp_pct / 100.0)
 
+        # Liquidation guard: real risk = margin x leverage x sl_pct. If this
+        # exceeds the margin (minus buffer), the position is liquidated BEFORE
+        # the stop-loss triggers, making the TP/SL risk model meaningless.
+        # Fail closed: reject the setup with an actionable reason.
+        risk_pct_of_margin = round(sl_pct * effective_leverage, 2)
+        if risk_pct_of_margin > MAX_RISK_PCT_OF_MARGIN:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=(
+                    f"Liquidation risk: SL {sl_pct:.2f}% x {effective_leverage}x leverage = "
+                    f"{risk_pct_of_margin:.1f}% of margin (limit {MAX_RISK_PCT_OF_MARGIN:.0f}%). "
+                    f"Position would be liquidated before the stop-loss is hit. "
+                    f"Reduce leverage or tighten the stop-loss."
+                ),
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+                risk_reward_ratio=target_rr,
+                risk_amount_usdt=round(risk_usdt, 2),
+                potential_profit_usdt=round(profit_usdt, 2),
+                sl_percent=sl_pct,
+                tp_percent=tp_pct,
+                risk_pct_of_margin=risk_pct_of_margin,
+            )
+
         return SizingResult(
             symbol=symbol,
             target_margin=margin_usdt,
@@ -204,5 +243,6 @@ class SizingCalculator:
             risk_amount_usdt=round(risk_usdt, 2),
             potential_profit_usdt=round(profit_usdt, 2),
             sl_percent=sl_pct,
-            tp_percent=tp_pct
+            tp_percent=tp_pct,
+            risk_pct_of_margin=risk_pct_of_margin,
         )
