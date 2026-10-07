@@ -55,26 +55,35 @@
           </div>
         </div>
 
-        <!-- Touch-Friendly Close Position Button -->
-        <div class="mt-2.5">
+        <!-- Touch-Friendly Close Position Button (two-tap confirm, no native dialogs) -->
+        <div class="mt-2.5 space-y-2">
           <button
             @click="handleClosePosition(p.symbol, p.position_side)"
             :disabled="closingSymbol === p.symbol"
-            class="clay-btn clay-btn-slate w-full h-10 text-xs font-bold space-x-1.5"
+            :class="confirmSymbol === p.symbol ? 'clay-btn-rose' : 'clay-btn-slate'"
+            class="clay-btn w-full h-12 text-sm font-bold space-x-1.5"
           >
-            <svg v-if="closingSymbol === p.symbol" class="animate-spin w-3.5 h-3.5 text-text-muted" viewBox="0 0 24 24" fill="none">
+            <svg v-if="closingSymbol === p.symbol" class="animate-spin w-4 h-4 text-white" viewBox="0 0 24 24" fill="none">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
             </svg>
-            <span v-else>
-              <svg class="w-3.5 h-3.5 inline mr-1 text-amber-500 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="15" y1="9" x2="9" y2="15"></line>
-                <line x1="9" y1="9" x2="15" y2="15"></line>
-              </svg>
-            </span>
-            <span>{{ closingSymbol === p.symbol ? 'Menutup Posisi...' : 'Tutup Posisi Sekarang (Ambil Untung)' }}</span>
+            <svg v-else class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+            <span>{{
+              closingSymbol === p.symbol
+                ? 'Menutup Posisi...'
+                : (confirmSymbol === p.symbol ? 'Yakin? Tap Sekali Lagi untuk Tutup' : 'Tutup Posisi Sekarang')
+            }}</span>
           </button>
+          <p v-if="closeError && closeErrorSymbol === p.symbol" class="text-xs text-rose-700 dark:text-rose-300 font-semibold leading-relaxed">
+            {{ closeError }}
+          </p>
+          <p v-if="closeSuccessSymbol === p.symbol" class="text-xs text-emerald-700 dark:text-emerald-300 font-semibold leading-relaxed">
+            Posisi {{ p.symbol }} berhasil ditutup.
+          </p>
         </div>
       </div>
 
@@ -99,11 +108,29 @@ const props = defineProps({
 
 const emit = defineEmits(['position-closed'])
 const closingSymbol = ref('')
+const confirmSymbol = ref('')
+const closeError = ref('')
+const closeErrorSymbol = ref('')
+const closeSuccessSymbol = ref('')
+let confirmTimer = null
 
 async function handleClosePosition(symbol, positionSide) {
-  if (!confirm(`Tutup posisi ${symbol} di harga pasar saat ini?`)) return
+  // Two-tap confirmation: first tap arms, second tap executes. Reverts after 6s.
+  if (confirmSymbol.value !== symbol) {
+    confirmSymbol.value = symbol
+    closeError.value = ''
+    closeSuccessSymbol.value = ''
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = setTimeout(() => {
+      if (confirmSymbol.value === symbol) confirmSymbol.value = ''
+    }, 6000)
+    return
+  }
+  if (confirmTimer) clearTimeout(confirmTimer)
+  confirmSymbol.value = ''
 
   closingSymbol.value = symbol
+  closeError.value = ''
   try {
     const res = await fetch('/api/position/close', {
       method: 'POST',
@@ -118,10 +145,11 @@ async function handleClosePosition(symbol, positionSide) {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Gagal menutup posisi.')
-    alert(data.message || `Posisi ${symbol} berhasil ditutup.`)
+    closeSuccessSymbol.value = symbol
     emit('position-closed')
   } catch (err) {
-    alert(err.message)
+    closeError.value = err.message
+    closeErrorSymbol.value = symbol
   } finally {
     closingSymbol.value = ''
   }

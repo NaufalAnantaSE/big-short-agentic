@@ -3,17 +3,17 @@
     <!-- API Missing Warning Banner -->
     <div
       v-if="!user.has_keys"
-      class="clay-card p-4 bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs leading-relaxed flex items-start justify-between gap-3 shadow-md"
+      class="clay-card p-4 bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 text-sm leading-relaxed flex items-start justify-between gap-3"
     >
       <div class="space-y-1">
-        <div class="font-extrabold text-amber-700 dark:text-amber-300 text-sm">Hubungkan Akun BingX Anda</div>
-        <p class="text-text-muted text-[11px] font-medium">
+        <div class="font-extrabold text-amber-700 dark:text-amber-300 text-base">Hubungkan Akun BingX Anda</div>
+        <p class="text-text-muted text-xs font-medium">
           Kunci API diperlukan agar bot dapat membaca saldo dan mengeksekusi posisi pada akun BingX Anda.
         </p>
       </div>
       <button
         @click="showApiKeyModal = true"
-        class="clay-btn bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-3.5 py-2 text-xs shrink-0 shadow-sm"
+        class="clay-btn bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-3.5 py-2 text-sm shrink-0"
       >
         Hubungkan
       </button>
@@ -31,6 +31,7 @@
       :session-state="summary.session"
       :token="token"
       :is-live-mode="!isDemo"
+      :simple-mode="simpleMode"
       @session-started="onSessionStarted"
       @session-stopped="onSessionStopped"
       @cycle-done="onCycleDone"

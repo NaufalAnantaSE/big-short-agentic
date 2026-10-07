@@ -3,21 +3,21 @@
     <div class="flex items-center justify-between pb-3 border-b border-border mb-3">
       <div class="flex items-center space-x-2">
         <span class="text-xs font-bold text-text-muted uppercase tracking-wider">Status Akun BingX</span>
-        <span :class="statusBadgeClass" class="text-[10px] font-bold px-2.5 py-0.5 rounded-full border shadow-sm">
+        <span :class="statusBadgeClass" class="text-[11px] font-bold px-2.5 py-0.5 rounded-full border">
           {{ statusBadgeLabel }}
         </span>
       </div>
       <div class="flex items-center space-x-2">
-        <span v-if="summary.last_sync_at" class="text-[10px] text-text-subtle font-mono hidden sm:inline">
+        <span v-if="summary.last_sync_at" class="text-[11px] text-text-muted font-mono hidden sm:inline">
           {{ formatTime(summary.last_sync_at) }}
         </span>
         <button
           @click="$emit('refresh')"
           :disabled="loading"
-          class="text-xs text-sky-600 dark:text-sky-400 hover:underline font-bold flex items-center space-x-1"
+          class="text-sm text-sky-700 dark:text-sky-400 hover:underline font-bold flex items-center space-x-1 min-h-[44px] px-2"
           title="Sinkronkan saldo dan posisi dengan BingX"
         >
-          <svg :class="{'animate-spin': loading}" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg :class="{'animate-spin': loading}" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -30,34 +30,34 @@
     <!-- Main Balance Display (Large for high legibility) -->
     <div class="mb-4">
       <div class="flex items-center justify-between">
-        <div class="text-[11px] font-semibold text-text-subtle">Total Saldo Aktif</div>
-        <div class="flex items-center space-x-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-          <span>Dinamis Real-Time</span>
+        <div class="text-xs font-semibold text-text-muted">Total Saldo Aktif</div>
+        <div class="flex items-center space-x-1 text-[11px] text-emerald-700 dark:text-emerald-400 font-bold">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <span>Terhubung</span>
         </div>
       </div>
       <div class="flex items-baseline space-x-2 mt-0.5">
-        <span class="text-2xl font-extrabold text-text-main tracking-tight font-mono">
+        <span class="text-3xl font-extrabold text-text-main tracking-tight font-mono">
           {{ formatNumber(summary.balance) }}
         </span>
-        <span class="text-sm font-extrabold text-sky-600 dark:text-sky-400">{{ summary.asset || 'USDT' }}</span>
+        <span class="text-base font-extrabold text-sky-700 dark:text-sky-400">{{ summary.asset || 'USDT' }}</span>
       </div>
-      <div class="text-xs text-text-subtle font-medium mt-0.5">
+      <div class="text-sm text-text-muted font-medium mt-0.5">
         Sekitar Rp {{ formatIDR(summary.balance) }}
       </div>
     </div>
 
     <!-- Secondary Metrics Grid (Recessed Inset Wells) -->
-    <div class="grid grid-cols-2 gap-2.5 pt-2 border-t border-border text-xs">
+    <div class="grid grid-cols-2 gap-2.5 pt-2 border-t border-border text-sm">
       <div class="clay-inset p-3">
-        <div class="text-[10px] text-text-subtle font-semibold">Ekuitas Akun</div>
-        <div class="font-extrabold text-text-main text-sm mt-0.5 font-mono">
+        <div class="text-[11px] text-text-muted font-semibold">Ekuitas Akun</div>
+        <div class="font-extrabold text-text-main text-base mt-0.5 font-mono">
           ${{ formatNumber(summary.equity) }}
         </div>
       </div>
       <div class="clay-inset p-3">
-        <div class="text-[10px] text-text-subtle font-semibold">Margin Terpakai</div>
-        <div class="font-extrabold text-text-main text-sm mt-0.5 font-mono">
+        <div class="text-[11px] text-text-muted font-semibold">Margin Terpakai</div>
+        <div class="font-extrabold text-text-main text-base mt-0.5 font-mono">
           ${{ formatNumber(summary.used_margin) }}
         </div>
       </div>

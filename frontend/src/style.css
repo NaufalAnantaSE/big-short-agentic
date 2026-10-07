@@ -37,38 +37,38 @@ body {
 }
 
 /* ==========================================================================
-   CLAYMORPHISM CORE UTILITIES
-   Soft, pillowy 3D tactile elevation with high accessibility contrast
+   CARD SURFACES
+   Soft elevated cards. Shadows kept to a single cheap layer so low-end
+   phones stay smooth; no multi-layer "clay" stacks.
    ========================================================================== */
 
-/* 1. Clay Card Surfaces */
+/* 1. Card Surfaces */
 .clay-card {
   background-color: var(--color-surface);
   border-radius: 1.25rem;
   border: 1px solid var(--color-border);
-  box-shadow: 6px 10px 20px -3px rgba(15, 23, 42, 0.08), inset 2px 2px 4px rgba(255, 255, 255, 0.95), inset -2px -2px 4px rgba(148, 163, 184, 0.2);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+  transition: box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .dark .clay-card {
-  box-shadow: 6px 10px 24px -3px rgba(0, 0, 0, 0.55), inset 2px 2px 4px rgba(255, 255, 255, 0.07), inset -2px -2px 4px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.5);
 }
 
 /* 2. Recessed Inset Wells (for metric boxes, secondary panels, inputs) */
 .clay-inset {
   background-color: var(--color-surface-inset);
   border-radius: 0.875rem;
-  border: 1px solid rgba(203, 213, 225, 0.6);
-  box-shadow: inset 3px 3px 6px rgba(148, 163, 184, 0.28), inset -2px -2px 5px rgba(255, 255, 255, 0.9);
-  transition: all 0.2s ease;
+  border: 1px solid var(--color-border);
+  box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.06);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .dark .clay-inset {
-  border-color: rgba(30, 41, 59, 0.7);
-  box-shadow: inset 3px 3px 7px rgba(0, 0, 0, 0.65), inset -2px -2px 5px rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
-/* 3. Tactile Pill Buttons */
+/* 3. Buttons — flat high-contrast colors (no gradients), min 44px touch target */
 .clay-btn {
   display: inline-flex;
   align-items: center;
@@ -77,11 +77,13 @@ body {
   font-weight: 700;
   cursor: pointer;
   user-select: none;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  min-height: 44px;
+  transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .clay-btn:active:not(:disabled) {
-  transform: scale(0.98) translateY(1px);
+  transform: scale(0.98);
 }
 
 .clay-btn:disabled {
@@ -90,86 +92,83 @@ body {
   transform: none;
 }
 
-/* Clay Button Color Themes */
+/* Button Color Themes — flat, WCAG-leaning contrast on white text */
 .clay-btn-emerald {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background-color: #047857;
   color: #ffffff;
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  box-shadow: 4px 6px 14px -1px rgba(16, 185, 129, 0.35), inset 1px 1px 2px rgba(255, 255, 255, 0.35), inset -2px -2px 4px rgba(4, 120, 87, 0.5);
+  border: 1px solid #065f46;
+  box-shadow: 0 3px 8px -2px rgba(4, 120, 87, 0.45);
 }
 .clay-btn-emerald:hover:not(:disabled) {
-  background: linear-gradient(135deg, #34d399 0%, #059669 100%);
-  box-shadow: 5px 8px 18px -1px rgba(16, 185, 129, 0.45), inset 1px 1px 2px rgba(255, 255, 255, 0.45);
+  background-color: #059669;
 }
 .clay-btn-emerald:active:not(:disabled) {
-  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.35), inset -1px -1px 2px rgba(255, 255, 255, 0.2);
+  background-color: #065f46;
+  box-shadow: none;
 }
 
 .clay-btn-sky {
-  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  background-color: #0369a1;
   color: #ffffff;
-  border: 1px solid rgba(2, 132, 199, 0.4);
-  box-shadow: 4px 6px 14px -1px rgba(2, 132, 199, 0.35), inset 1px 1px 2px rgba(255, 255, 255, 0.35), inset -2px -2px 4px rgba(7, 89, 133, 0.5);
+  border: 1px solid #075985;
+  box-shadow: 0 3px 8px -2px rgba(3, 105, 161, 0.45);
 }
 .clay-btn-sky:hover:not(:disabled) {
-  background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
-  box-shadow: 5px 8px 18px -1px rgba(2, 132, 199, 0.45), inset 1px 1px 2px rgba(255, 255, 255, 0.45);
+  background-color: #0284c7;
 }
 .clay-btn-sky:active:not(:disabled) {
-  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.35), inset -1px -1px 2px rgba(255, 255, 255, 0.2);
+  background-color: #075985;
+  box-shadow: none;
 }
 
 .clay-btn-rose {
-  background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  background-color: #be123c;
   color: #ffffff;
-  border: 1px solid rgba(244, 63, 94, 0.4);
-  box-shadow: 4px 6px 14px -1px rgba(244, 63, 94, 0.35), inset 1px 1px 2px rgba(255, 255, 255, 0.35), inset -2px -2px 4px rgba(159, 18, 57, 0.5);
+  border: 1px solid #9f1239;
+  box-shadow: 0 3px 8px -2px rgba(190, 18, 60, 0.45);
 }
 .clay-btn-rose:hover:not(:disabled) {
-  background: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
-  box-shadow: 5px 8px 18px -1px rgba(244, 63, 94, 0.45);
+  background-color: #e11d48;
 }
 .clay-btn-rose:active:not(:disabled) {
-  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.35), inset -1px -1px 2px rgba(255, 255, 255, 0.2);
+  background-color: #9f1239;
+  box-shadow: none;
 }
 
 .clay-btn-slate {
-  background: #e2e8f0;
-  color: #0f172a;
-  border: 1px solid rgba(203, 213, 225, 0.9);
-  box-shadow: 3px 5px 12px -2px rgba(15, 23, 42, 0.1), inset 1px 1px 2px rgba(255, 255, 255, 0.9), inset -2px -2px 4px rgba(148, 163, 184, 0.3);
+  background-color: var(--color-surface-inset);
+  color: var(--color-text-main);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.1);
 }
 .clay-btn-slate:hover:not(:disabled) {
-  background: #cbd5e1;
+  background-color: var(--color-surface-card);
 }
 .dark .clay-btn-slate {
-  background: #1e293b;
-  color: #f1f5f9;
-  border: 1px solid rgba(51, 65, 85, 0.8);
-  box-shadow: 3px 5px 14px -2px rgba(0, 0, 0, 0.45), inset 1px 1px 2px rgba(255, 255, 255, 0.12), inset -2px -2px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.45);
 }
-.dark .clay-btn-slate:hover:not(:disabled) {
-  background: #334155;
+.clay-btn-slate:active:not(:disabled) {
+  box-shadow: none;
 }
 
-/* 4. Tactile Inputs */
+/* 4. Inputs */
 .clay-input {
   background-color: var(--color-surface-inset);
   color: var(--color-text-main);
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
-  box-shadow: inset 2px 2px 4px rgba(148, 163, 184, 0.25), inset -2px -2px 4px rgba(255, 255, 255, 0.85);
-  transition: all 0.2s ease;
+  min-height: 44px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 .dark .clay-input {
-  box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.6), inset -2px -2px 4px rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4);
 }
 
 .clay-input:focus {
   outline: none;
   border-color: #0284c7;
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.2), inset 2px 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.25);
 }
 
 /* 5. Custom scrollbar */
