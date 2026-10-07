@@ -11,7 +11,7 @@
     <div class="space-y-3 mb-4">
       <div class="grid grid-cols-2 gap-2.5">
         <div class="clay-inset p-3">
-          <label class="block text-[11px] text-text-subtle font-bold mb-1">Modal per Koin</label>
+          <label class="block text-xs text-text-muted font-bold mb-1">Modal per Koin</label>
           <div class="flex items-center space-x-1">
             <span class="text-base font-extrabold text-text-main font-mono">$</span>
             <input
@@ -23,13 +23,13 @@
               step="1"
               class="w-full bg-transparent text-base font-extrabold text-text-main font-mono focus:outline-none"
             />
-            <span class="text-[11px] font-bold text-text-subtle">USDT</span>
+            <span class="text-xs font-bold text-text-muted">USDT</span>
           </div>
-          <div class="text-[10px] text-text-subtle font-medium mt-0.5">≈ Rp {{ formatIDR(margin) }}</div>
+          <div class="text-[11px] text-text-muted font-medium mt-0.5">≈ Rp {{ formatIDR(margin) }}</div>
         </div>
 
         <div class="clay-inset p-3">
-          <label class="block text-[11px] text-text-subtle font-bold mb-1">Batas Maksimal</label>
+          <label class="block text-xs text-text-muted font-bold mb-1">Batas Maksimal</label>
           <div class="flex items-center space-x-1">
             <input
               v-model.number="quota"
@@ -39,51 +39,58 @@
               max="50"
               class="w-full bg-transparent text-base font-extrabold text-text-main font-mono focus:outline-none"
             />
-            <span class="text-[11px] font-bold text-text-subtle">Koin</span>
+            <span class="text-xs font-bold text-text-muted">Koin</span>
           </div>
-          <div class="text-[10px] text-text-subtle font-medium mt-0.5">Posisi bersamaan</div>
+          <div class="text-[11px] text-text-muted font-medium mt-0.5">Posisi bersamaan</div>
         </div>
       </div>
 
-      <!-- Mode Selection Dropdown -->
-      <div>
-        <label class="block text-[11px] text-text-subtle font-bold mb-1">Pilihan Semesta Koin</label>
-        <select
-          v-model="universeMode"
-          :disabled="isSessionRunning"
-          class="clay-input w-full h-11 px-3 text-xs text-text-main font-semibold"
-        >
-          <option value="PUMP_GAINERS">PUMP_GAINERS (Semua Altcoin yang Sedang Melonjak)</option>
-          <option value="MEME_ONLY">MEME_ONLY (Khusus Memecoin Populer Saja)</option>
-        </select>
-      </div>
+      <!-- Advanced strategy selectors: hidden in Simple mode (senior-friendly).
+           Defaults (PUMP_GAINERS / SHORT) are applied automatically. -->
+      <template v-if="!simpleMode">
+        <!-- Mode Selection Dropdown -->
+        <div>
+          <label class="block text-xs text-text-muted font-bold mb-1">Pilihan Semesta Koin</label>
+          <select
+            v-model="universeMode"
+            :disabled="isSessionRunning"
+            class="clay-input w-full h-11 px-3 text-sm text-text-main font-semibold"
+          >
+            <option value="PUMP_GAINERS">PUMP_GAINERS (Semua Altcoin yang Sedang Melonjak)</option>
+            <option value="MEME_ONLY">MEME_ONLY (Khusus Memecoin Populer Saja)</option>
+          </select>
+        </div>
 
-      <!-- Direction Mode Selector -->
-      <div>
-        <label class="block text-[11px] text-text-subtle font-bold mb-1">Arah Trading (Strategi AI)</label>
-        <select
-          v-model="directionMode"
-          :disabled="isSessionRunning"
-          class="clay-input w-full h-11 px-3 text-xs text-text-main font-semibold"
-        >
-          <option value="SHORT">SHORT ONLY (Koin Pucuk / Jenuh Pembeli)</option>
-          <option value="LONG">LONG ONLY (Pantulan Support / Retest Sehat)</option>
-          <option value="BOTH">DUA ARAH (Long & Short Fleksibel Sesuai AI)</option>
-        </select>
-      </div>
+        <!-- Direction Mode Selector -->
+        <div>
+          <label class="block text-xs text-text-muted font-bold mb-1">Arah Trading (Strategi AI)</label>
+          <select
+            v-model="directionMode"
+            :disabled="isSessionRunning"
+            class="clay-input w-full h-11 px-3 text-sm text-text-main font-semibold"
+          >
+            <option value="SHORT">SHORT ONLY (Koin Pucuk / Jenuh Pembeli)</option>
+            <option value="LONG">LONG ONLY (Pantulan Support / Retest Sehat)</option>
+            <option value="BOTH">DUA ARAH (Long &amp; Short Fleksibel Sesuai AI)</option>
+          </select>
+        </div>
 
-      <!-- Direction & Strategy Mode Badge -->
-      <div class="clay-inset p-2.5 flex items-center justify-between text-[11px]">
-        <div class="space-y-0.5">
-          <span class="block text-[10px] font-bold text-text-subtle uppercase tracking-wider">Arah Aktif</span>
-          <span class="font-extrabold text-sky-700 dark:text-sky-300">
-            {{ directionMode === 'BOTH' ? 'DUA ARAH (Long & Short)' : (directionMode === 'LONG' ? 'LONG ONLY (Beli Pantulan)' : 'SHORT ONLY (Jual Pucuk)') }}
+        <!-- Direction & Strategy Mode Badge -->
+        <div class="clay-inset p-2.5 flex items-center justify-between text-xs">
+          <div class="space-y-0.5">
+            <span class="block text-[11px] font-bold text-text-muted uppercase tracking-wider">Arah Aktif</span>
+            <span class="font-extrabold text-sky-700 dark:text-sky-300">
+              {{ directionMode === 'BOTH' ? 'DUA ARAH (Long & Short)' : (directionMode === 'LONG' ? 'LONG ONLY (Beli Pantulan)' : 'SHORT ONLY (Jual Pucuk)') }}
+            </span>
+          </div>
+          <span class="text-[11px] px-2 py-0.5 rounded-full font-mono font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
+            {{ directionMode }}
           </span>
         </div>
-        <span class="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
-          {{ directionMode }}
-        </span>
-      </div>
+      </template>
+      <p v-else class="text-xs text-text-muted leading-relaxed">
+        Strategi otomatis: AI memindai koin yang sedang melonjak lalu ambil posisi short saat momentum jenuh.
+      </p>
     </div>
 
     <!-- Active Status Callout if Quota Reached -->
@@ -104,10 +111,10 @@
 
     <!-- Big Action Buttons (Touch Target >= 48px) -->
     <div class="space-y-2.5">
-      <!-- State 1: IDLE / TERMINATED -> Start Button -->
+      <!-- State 1: IDLE / TERMINATED -> Start Button (opens confirmation first) -->
       <div v-if="!isSessionRunning" class="grid grid-cols-1 gap-2">
         <button
-          @click="startSession"
+          @click="showStartConfirm = true"
           :disabled="actionLoading"
           class="clay-btn clay-btn-emerald w-full h-12 text-sm space-x-2"
         >
@@ -116,6 +123,9 @@
           </svg>
           <span>{{ actionLoading ? 'Menyiapkan Engine...' : 'Mulai Bot Otomatis' }}</span>
         </button>
+        <p class="text-[11px] text-text-muted text-center leading-relaxed">
+          Bot akan memindai pasar dan membuka posisi secara otomatis sesuai pengaturan di atas.
+        </p>
       </div>
 
       <!-- State 2: RUNNING (ACTIVE_SEARCHING or EXHAUSTED) -> Controls -->
@@ -171,6 +181,33 @@
         </button>
       </div>
     </div>
+
+    <!-- Start confirmation modal (prevents accidental taps, explicit in Live mode) -->
+    <div v-if="showStartConfirm" class="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" @click.self="showStartConfirm = false">
+      <div class="w-full max-w-md clay-card p-5 rounded-t-3xl sm:rounded-3xl">
+        <h3 class="text-base font-extrabold text-text-main mb-2">Mulai Bot Otomatis?</h3>
+        <div class="text-sm text-text-muted leading-relaxed space-y-2 mb-4">
+          <p>Bot akan berjalan dengan pengaturan:</p>
+          <ul class="list-disc list-inside space-y-1 font-semibold text-text-main">
+            <li>Modal per koin: <span class="font-mono">${{ margin }} USDT</span> (≈ Rp {{ formatIDR(margin) }})</li>
+            <li>Maksimal {{ quota }} posisi bersamaan</li>
+            <li>Mode: {{ isLiveMode ? 'LIVE (uang sungguhan)' : 'Demo (uang virtual)' }}</li>
+          </ul>
+          <p v-if="isLiveMode" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-300 font-bold">
+            Perhatian: mode LIVE menggunakan saldo USDT asli Anda. Pastikan Anda memahami risikonya.
+          </p>
+          <p v-else>Mode demo memakai uang virtual, aman untuk mencoba.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5">
+          <button @click="showStartConfirm = false" class="clay-btn clay-btn-slate h-12 text-sm">
+            Batal
+          </button>
+          <button @click="confirmStart" :disabled="actionLoading" class="clay-btn clay-btn-emerald h-12 text-sm">
+            {{ actionLoading ? 'Memulai...' : 'Ya, Mulai Bot' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -180,7 +217,11 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 const props = defineProps({
   sessionState: Object,
   token: String,
-  isLiveMode: Boolean
+  isLiveMode: Boolean,
+  simpleMode: {
+    type: Boolean,
+    default: true
+  }
 })
 
 const emit = defineEmits(['session-started', 'session-stopped', 'cycle-done', 'sync-requested'])
@@ -193,6 +234,7 @@ const actionLoading = ref(false)
 const cycleLoading = ref(false)
 const autoScan = ref(true)
 const countdown = ref(60)
+const showStartConfirm = ref(false)
 let timerId = null
 
 const isSessionRunning = computed(() => {
@@ -284,6 +326,8 @@ function formatIDR(usdt) {
 }
 
 async function startSession() {
+  // Kept for programmatic use; UI now goes through the confirmation modal.
+  showStartConfirm.value = false
   actionLoading.value = true
   try {
     const res = await fetch('/api/session/start', {
@@ -316,6 +360,10 @@ async function startSession() {
   } finally {
     actionLoading.value = false
   }
+}
+
+function confirmStart() {
+  startSession()
 }
 
 async function stopSession() {
