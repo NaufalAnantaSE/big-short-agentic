@@ -241,3 +241,52 @@ def test_plain_explainer_formats_tpsl_note():
     assert h["sl_percent"] == 3.0
     assert "Manajemen Risiko Otomatis" in h["tpsl_note"]
     assert any("Ambil Untung (TP)" in note for note in h["market_notes"])
+
+def test_liquidation_guard_rejects_overleveraged_wide_sl():
+    """20x leverage with a 6% SL risks 120% of margin: the position would be
+    liquidated before the stop-loss triggers, so the setup must be rejected."""
+    from sizing import SizingCalculator
+
+    contract_info = {
+        "quantityPrecision": 2,
+        "pricePrecision": 3,
+        "tradeMinQuantity": "0.01",
+        "tradeMinUSDT": "5.0",
+        "maxShortLeverage": 20,
+    }
+    res = SizingCalculator.calculate_lot(
+        symbol="SOL-USDT",
+        margin_usdt=10.0,
+        target_leverage=20,
+        current_price=50.0,
+        contract_info=contract_info,
+        direction="SHORT",
+        atr=2.0,  # atr_pct = 2.0*1.5/50*100 = 6.0% SL (clamped to max)
+    )
+    assert res.is_valid is False
+    assert "Liquidation risk" in res.rejection_reason
+    assert res.risk_pct_of_margin == 120.0
+
+
+def test_liquidation_guard_allows_safe_combo():
+    """20x leverage with a 3% SL risks 60% of margin: within the 80% limit."""
+    from sizing import SizingCalculator
+
+    contract_info = {
+        "quantityPrecision": 2,
+        "pricePrecision": 3,
+        "tradeMinQuantity": "0.01",
+        "tradeMinUSDT": "5.0",
+        "maxShortLeverage": 20,
+    }
+    res = SizingCalculator.calculate_lot(
+        symbol="SOL-USDT",
+        margin_usdt=10.0,
+        target_leverage=20,
+        current_price=50.0,
+        contract_info=contract_info,
+        direction="SHORT",
+        atr=1.0,  # atr_pct = 1.0*1.5/50*100 = 3.0% SL
+    )
+    assert res.is_valid is True
+    assert res.risk_pct_of_margin == 60.0

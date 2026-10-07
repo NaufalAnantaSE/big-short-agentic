@@ -24,10 +24,22 @@ class BingXClient:
         self.client = httpx.Client(timeout=10.0)
 
     @staticmethod
+    def _build_query_string(params: Dict[str, Any]) -> str:
+        """Builds a URL-encoded query string with keys sorted alphabetically.
+
+        The exact string returned here is both signed (HMAC-SHA256) and sent
+        over the wire, so the signature always matches the transmitted bytes.
+        Manual f-string interpolation must NOT be used: values such as the
+        JSON-encoded stopLoss/takeProfit payloads contain spaces, quotes and
+        braces that are illegal in a URL and would break the signature.
+        """
+        sorted_items = sorted(params.items(), key=lambda kv: kv[0])
+        return urlencode([(k, v) for k, v in sorted_items])
+
+    @staticmethod
     def sign_params(params: Dict[str, Any], secret_key: str) -> str:
-        """Sorts parameters alphabetically, formats query string, and generates HMAC-SHA256 hex digest."""
-        sorted_keys = sorted(params.keys())
-        query_str = "&".join(f"{k}={params[k]}" for k in sorted_keys)
+        """Sorts parameters alphabetically, URL-encodes the query string, and generates HMAC-SHA256 hex digest."""
+        query_str = BingXClient._build_query_string(params)
         return hmac.new(
             secret_key.encode("utf-8"),
             query_str.encode("utf-8"),
@@ -54,15 +66,16 @@ class BingXClient:
             req_params["timestamp"] = int(time.time() * 1000)
             req_params["recvWindow"] = 10000
             
-            # Construct sorted query string to guarantee exact byte-for-byte parameter order
-            sorted_keys = sorted(req_params.keys())
-            query_str = "&".join(f"{k}={req_params[k]}" for k in sorted_keys)
+            # Build the URL-encoded query string once; the signature is computed
+            # over this exact string and the same string is transmitted, so the
+            # signature always matches the bytes the server receives.
+            query_str = self._build_query_string(req_params)
             signature = hmac.new(
                 self.config.secret_key.encode("utf-8"),
                 query_str.encode("utf-8"),
                 hashlib.sha256
             ).hexdigest()
-            
+
             final_url = f"{url}?{query_str}&signature={signature}"
             send_params = None
         else:

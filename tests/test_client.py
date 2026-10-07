@@ -46,3 +46,58 @@ def test_client_order_id_formatting(mocker):
     assert called_params["clientOrderId"] == long_upper_id.lower()[:40]
     assert len(called_params["clientOrderId"]) <= 40
     assert called_params["clientOrderId"].islower()
+
+def test_signed_request_urlencodes_tpsl_json(mocker):
+    """Regression test: TP/SL JSON payloads must be URL-encoded in the signed
+    query string. Previously the raw JSON (spaces, quotes, braces) was pasted
+    into the URL, producing an illegal request URL and a signature that did
+    not match the transmitted bytes."""
+    import hashlib
+    import hmac as hmaclib
+    import json as jsonlib
+    from urllib.parse import parse_qsl
+
+    config = AppConfig(api_key="mock_key", secret_key="mock_secret")
+    client = BingXClient(config)
+    captured = {}
+
+    def fake_request(method, url, params=None, headers=None):
+        captured["method"] = method
+        captured["url"] = url
+
+        class Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"code": 0, "data": {"orderId": 1}}
+
+        return Resp()
+
+    mocker.patch.object(client.client, "request", side_effect=fake_request)
+
+    client.place_order(
+        symbol="DOGE-USDT",
+        side="SELL",
+        position_side="SHORT",
+        order_type="MARKET",
+        quantity=100.0,
+        client_order_id="test123",
+        stop_loss_price=0.21,
+        take_profit_price=0.18,
+    )
+
+    url = captured["url"]
+    assert "?" in url
+    query = url.split("?", 1)[1]
+    # No illegal characters may appear raw in the transmitted query string
+    for ch in (" ", "{", "}", '"', "<", ">"):
+        assert ch not in query, f"illegal character {ch!r} in signed URL query"
+    # stopLoss/takeProfit must round-trip as valid JSON after decoding
+    params = dict(parse_qsl(query))
+    assert jsonlib.loads(params["stopLoss"])["type"] == "STOP_MARKET"
+    assert jsonlib.loads(params["takeProfit"])["type"] == "TAKE_PROFIT_MARKET"
+    # The signature must match the exact transmitted query bytes
+    raw_query, sig = query.rsplit("&signature=", 1)
+    expected = hmaclib.new(b"mock_secret", raw_query.encode("utf-8"), hashlib.sha256).hexdigest()
+    assert sig == expected
