@@ -124,8 +124,11 @@ class TenantSessionManager:
                 db.update_session_status(sess["session_id"], "ACTIVE_SEARCHING", active_count)
 
             # 2. Run the cycle
-            is_live = bool(sess.get("is_live", 0))
-            self.run_cycle_for_user(user_id, dry_run=(not is_live))
+            # An exchange session (EXCHANGE_DEMO or EXCHANGE_LIVE) executes orders to the exchange.
+            # Only LOCAL_PAPER runs in dry_run mode.
+            exec_mode = sess.get("execution_mode") or ExecutionMode.EXCHANGE_DEMO.value
+            is_local = (exec_mode == ExecutionMode.LOCAL_PAPER.value)
+            self.run_cycle_for_user(user_id, dry_run=is_local)
         except Exception as exc:
             AuditLogger.log_event("BACKGROUND_SCAN_ERROR", {"user_id": user_id, "error": str(exc)}, session_id=sess.get("session_id"))
         finally:
@@ -635,7 +638,8 @@ class TenantSessionManager:
                 rsi=rsi_data,
                 bollinger=bb_data,
                 ema_trend=ema_data,
-                playbook=playbook_data
+                playbook=playbook_data,
+                sizing_rejection=sizing.get("rejection_reason")
             )
             # Add execution information
             h["executed"] = executed

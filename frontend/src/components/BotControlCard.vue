@@ -341,7 +341,7 @@ async function startSession() {
         leverage: 20,
         quota: quota.value,
         mode: universeMode.value,
-        is_live: props.isLiveMode,
+        is_live: true,
         environment: props.isLiveMode ? 'BINGX_LIVE' : 'BINGX_VST',
         execution_mode: props.isLiveMode ? 'EXCHANGE_LIVE' : 'EXCHANGE_DEMO',
         direction_mode: directionMode.value,
@@ -396,7 +396,7 @@ async function triggerCycle() {
         'Authorization': `Bearer ${props.token}`
       },
       body: JSON.stringify({
-        dry_run: !props.isLiveMode
+        dry_run: false
       })
     })
     const data = await res.json()

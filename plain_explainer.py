@@ -33,7 +33,8 @@ def humanize_ai_decision(
     rsi: Optional[Dict[str, Any]] = None,
     bollinger: Optional[Dict[str, Any]] = None,
     ema_trend: Optional[Dict[str, Any]] = None,
-    playbook: Optional[Dict[str, Any]] = None
+    playbook: Optional[Dict[str, Any]] = None,
+    sizing_rejection: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Produces a senior-friendly narrative card with high legibility and clear, empathetic explanations.
@@ -59,9 +60,15 @@ def humanize_ai_decision(
             action_advice = "Koin ini sangat ideal untuk di-short, namun kuota maksimal posisi akun Anda saat ini sudah penuh."
         elif not sizing_valid:
             badge_color = "amber"
-            badge_label = "TERLEWAT: MINIMAL BURSA"
-            summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
-            action_advice = "Koin ini memiliki sinyal short yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
+            rej = (sizing_rejection or "").lower()
+            if "liquidation" in rej:
+                badge_label = "TERLEWAT: RISIKO LIKUIDASI"
+                summary_title = f"Koin {clean_sym} Dilewati (Risiko Likuidasi Tinggi)"
+                action_advice = "Koin ini memiliki sinyal jual yang baik, tetapi fluktuasi harganya terlalu lebar untuk leverage yang digunakan sehingga sistem menahan order agar akun aman dari likuidasi bursa."
+            else:
+                badge_label = "TERLEWAT: MINIMAL BURSA"
+                summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
+                action_advice = "Koin ini memiliki sinyal short yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
         else:
             badge_label = "EKSEKUSI: SIAP BUKA POSISI"
             summary_title = f"Koin {clean_sym} Siap Dijual (Potensi Penurunan Terbuka)"
@@ -83,9 +90,15 @@ def humanize_ai_decision(
             action_advice = "Koin ini sangat ideal untuk posisi beli (Long), namun kuota maksimal posisi akun Anda saat ini sudah penuh."
         elif not sizing_valid:
             badge_color = "amber"
-            badge_label = "TERLEWAT: MINIMAL BURSA"
-            summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
-            action_advice = "Koin ini memiliki sinyal beli (Long) yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
+            rej = (sizing_rejection or "").lower()
+            if "liquidation" in rej:
+                badge_label = "TERLEWAT: RISIKO LIKUIDASI"
+                summary_title = f"Koin {clean_sym} Dilewati (Risiko Likuidasi Tinggi)"
+                action_advice = "Koin ini memiliki sinyal beli yang baik, tetapi fluktuasi harganya terlalu lebar untuk leverage yang digunakan sehingga sistem menahan order agar akun aman dari likuidasi bursa."
+            else:
+                badge_label = "TERLEWAT: MINIMAL BURSA"
+                summary_title = f"Koin {clean_sym} Dilewati (Notional di Bawah Min Bursa)"
+                action_advice = "Koin ini memiliki sinyal beli (Long) yang baik, tetapi batas minimum transaksi BingX untuk pair ini lebih besar dari margin per koin Anda."
         else:
             badge_label = "EKSEKUSI: SIAP BUKA POSISI LONG"
             summary_title = f"Koin {clean_sym} Siap Dibeli (Potensi Kenaikan Lanjutan)"

@@ -218,10 +218,20 @@ class SessionOrchestrator:
             # Recommended Risk:Reward from matched playbook
             target_rr = playbook_match.recommended_rr if playbook_match.recommended_rr else 2.0
 
+            # Smart Adaptive Leverage: if ATR SL percentage is wide (e.g. 4.5% - 6.0%),
+            # dynamically cap leverage so that sl_pct * leverage <= 75% of margin.
+            # This guarantees positions execute safely without being rejected by liquidation guard.
+            effective_target_lev = self.current_session.leverage
+            if atr_val and cand.last_price > 0:
+                est_sl_pct = min(6.0, max(1.5, (1.5 * float(atr_val) / cand.last_price) * 100.0))
+                max_safe_lev = int(75.0 / est_sl_pct)
+                if effective_target_lev > max_safe_lev:
+                    effective_target_lev = max(1, max_safe_lev)
+
             sizing = SizingCalculator.calculate_lot(
                 symbol=cand.symbol,
                 margin_usdt=self.current_session.margin_per_pos,
-                target_leverage=self.current_session.leverage,
+                target_leverage=effective_target_lev,
                 current_price=cand.last_price,
                 contract_info=cand.contract_info,
                 max_allowed_leverage=20,
