@@ -33,8 +33,8 @@ htmlcov/
 .tox/
 
 # Local Database & Secrets (DO NOT COMMIT)
-data/*.db
-data/*.db.bak
+data/*.db*
+data/*.bak*
 data/*.sqlite3
 data/*.sqlite
 data/.master_key

@@ -1,7 +1,7 @@
 """Deterministic lot sizing calculator using Python Decimal arithmetic."""
 
-from decimal import Decimal, ROUND_DOWN
-from typing import Dict, Any, Tuple
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from typing import Dict, Any, Tuple, Optional
 from pydantic import BaseModel
 
 class SizingResult(BaseModel):
@@ -13,11 +13,77 @@ class SizingResult(BaseModel):
     quantity: float
     is_valid: bool
     rejection_reason: str = ""
+    # Phase 1: Automated TP/SL & Risk Management
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    risk_reward_ratio: float = 2.0
+    risk_amount_usdt: float = 0.0
+    potential_profit_usdt: float = 0.0
+    sl_percent: float = 0.0
+    tp_percent: float = 0.0
 
 class SizingError(Exception):
     pass
 
 class SizingCalculator:
+    @staticmethod
+    def calculate_dynamic_tpsl(
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        contract_info: Dict[str, Any],
+        atr: Optional[float] = None,
+        atr_multiplier_sl: float = 1.5,
+        target_rr: float = 2.0,
+        min_sl_pct: float = 1.5,
+        max_sl_pct: float = 6.0,
+    ) -> Tuple[float, float, float, float]:
+        """
+        Calculates dynamic Stop-Loss and Take-Profit prices quantized to contract pricePrecision.
+        Returns:
+            (sl_price, tp_price, actual_sl_pct, actual_tp_pct)
+        """
+        if entry_price <= 0:
+            return 0.0, 0.0, 0.0, 0.0
+
+        dir_norm = direction.upper()
+        if atr is not None and atr > 0:
+            atr_pct = (atr * atr_multiplier_sl / entry_price) * 100.0
+            clamped_sl_pct = max(min_sl_pct, min(max_sl_pct, atr_pct))
+        else:
+            clamped_sl_pct = 3.0
+
+        tp_pct_target = clamped_sl_pct * max(1.0, target_rr)
+
+        if dir_norm == "LONG":
+            raw_sl = entry_price * (1.0 - (clamped_sl_pct / 100.0))
+            raw_tp = entry_price * (1.0 + (tp_pct_target / 100.0))
+            if raw_sl <= 0:
+                raw_sl = entry_price * 0.95
+        else:  # SHORT
+            raw_sl = entry_price * (1.0 + (clamped_sl_pct / 100.0))
+            raw_tp = entry_price * (1.0 - (tp_pct_target / 100.0))
+            if raw_tp <= 0:
+                raw_tp = entry_price * 0.90
+
+        price_precision = int(contract_info.get("pricePrecision", 4))
+        p_step = Decimal("10") ** (-price_precision) if price_precision > 0 else Decimal("1")
+
+        d_sl = Decimal(str(raw_sl)).quantize(p_step, rounding=ROUND_HALF_UP)
+        d_tp = Decimal(str(raw_tp)).quantize(p_step, rounding=ROUND_HALF_UP)
+
+        sl_price = float(d_sl)
+        tp_price = float(d_tp)
+
+        if dir_norm == "LONG":
+            act_sl_pct = abs((entry_price - sl_price) / entry_price) * 100.0
+            act_tp_pct = abs((tp_price - entry_price) / entry_price) * 100.0
+        else:
+            act_sl_pct = abs((sl_price - entry_price) / entry_price) * 100.0
+            act_tp_pct = abs((entry_price - tp_price) / entry_price) * 100.0
+
+        return sl_price, tp_price, round(act_sl_pct, 2), round(act_tp_pct, 2)
+
     @staticmethod
     def calculate_lot(
         symbol: str,
@@ -25,7 +91,11 @@ class SizingCalculator:
         target_leverage: int,
         current_price: float,
         contract_info: Dict[str, Any],
-        max_allowed_leverage: int = 20
+        max_allowed_leverage: int = 20,
+        direction: str = "SHORT",
+        atr: Optional[float] = None,
+        target_rr: float = 2.0,
+        atr_multiplier_sl: float = 1.5,
     ) -> SizingResult:
         """
         Calculates exact order quantity according to exchange contract precision.
@@ -106,6 +176,19 @@ class SizingCalculator:
                 rejection_reason=f"Effective notional {actual_notional:.2f} USDT is below tradeMinUSDT ({trade_min_usdt} USDT)."
             )
 
+        sl_price, tp_price, sl_pct, tp_pct = SizingCalculator.calculate_dynamic_tpsl(
+            symbol=symbol,
+            direction=direction,
+            entry_price=current_price,
+            contract_info=contract_info,
+            atr=atr,
+            atr_multiplier_sl=atr_multiplier_sl,
+            target_rr=target_rr
+        )
+
+        risk_usdt = float(actual_notional) * (sl_pct / 100.0)
+        profit_usdt = float(actual_notional) * (tp_pct / 100.0)
+
         return SizingResult(
             symbol=symbol,
             target_margin=margin_usdt,
@@ -114,5 +197,12 @@ class SizingCalculator:
             notional_value=float(actual_notional),
             quantity=float(d_qty),
             is_valid=True,
-            rejection_reason=""
+            rejection_reason="",
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,
+            risk_reward_ratio=target_rr,
+            risk_amount_usdt=round(risk_usdt, 2),
+            potential_profit_usdt=round(profit_usdt, 2),
+            sl_percent=sl_pct,
+            tp_percent=tp_pct
         )

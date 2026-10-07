@@ -595,6 +595,17 @@ class TenantSessionManager:
             imp = mf.get("impulse_wave")
             f_sent = mf.get("funding_sentiment")
             fr = mf.get("funding_rate")
+            sl_price = ev.get("stop_loss_price") or sizing.get("stop_loss_price")
+            tp_price = ev.get("take_profit_price") or sizing.get("take_profit_price")
+            sl_pct = ev.get("sl_percent") or sizing.get("sl_percent")
+            tp_pct = ev.get("tp_percent") or sizing.get("tp_percent")
+            risk_usdt = ev.get("risk_amount_usdt") or sizing.get("risk_amount_usdt")
+            profit_usdt = ev.get("potential_profit_usdt") or sizing.get("potential_profit_usdt")
+            rsi_data = mf.get("rsi")
+            bb_data = mf.get("bollinger")
+            ema_data = mf.get("ema_trend")
+            playbook_data = ev.get("playbook")
+
             h = humanize_ai_decision(
                 symbol=ev.get("symbol", ""),
                 decision=ev.get("ai_decision", "SKIP"),
@@ -614,7 +625,17 @@ class TenantSessionManager:
                 fibonacci=fib,
                 impulse_wave=imp,
                 funding_sentiment=f_sent,
-                funding_rate=fr
+                funding_rate=fr,
+                take_profit_price=tp_price,
+                stop_loss_price=sl_price,
+                tp_percent=tp_pct,
+                sl_percent=sl_pct,
+                risk_amount_usdt=risk_usdt,
+                potential_profit_usdt=profit_usdt,
+                rsi=rsi_data,
+                bollinger=bb_data,
+                ema_trend=ema_data,
+                playbook=playbook_data
             )
             # Add execution information
             h["executed"] = executed
@@ -623,6 +644,11 @@ class TenantSessionManager:
             h["dry_run"] = dry_run_flag
             h["quantity"] = sizing.get("quantity", 0)
             h["notional"] = sizing.get("notional_value", 0)
+            h["stop_loss_price"] = sl_price
+            h["take_profit_price"] = tp_price
+            h["playbook"] = playbook_data
+            h["sl_percent"] = sl_pct
+            h["tp_percent"] = tp_pct
             
             # Record order to DB if executed
             if executed and order_id:
@@ -641,7 +667,9 @@ class TenantSessionManager:
                     order_id=str(order_id),
                     status="FILLED",
                     side=ord_side,
-                    position_side=pos_side
+                    position_side=pos_side,
+                    stop_loss_price=sl_price,
+                    take_profit_price=tp_price
                 )
 
             humanized_evals.append(h)

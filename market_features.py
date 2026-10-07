@@ -49,7 +49,7 @@ def _timeframe_features(rows: Iterable[Dict[str, Any]], now_ms: int) -> Dict[str
     ema_distance = ((last["close"] / avg_close) - 1.0) * 100 if avg_close > 0 else 0.0
     return {
         "candle_count": len(closed), "valid": True, "last_close": last["close"],
-        "change_pct": change_pct, "atr_pct": (avg_range / last["close"] * 100) if last["close"] > 0 else 0.0,
+        "change_pct": change_pct, "atr": avg_range, "atr_pct": (avg_range / last["close"] * 100) if last["close"] > 0 else 0.0,
         "distance_from_mean_pct": ema_distance, "upper_wick_ratio": upper_wick / last_range,
         "volume_zscore": vol_z, "last_direction": "UP" if last["close"] >= last["open"] else "DOWN",
         "last_time": int(last["time"]),
@@ -233,6 +233,185 @@ def _funding_sentiment(funding_rate: float | None) -> str:
     return "EXTREME_SHORT_CROWD_SQUEEZE_RISK"
 
 
+def _calculate_rsi(closes: List[float], period: int = 14) -> float:
+    if len(closes) < 3:
+        return 50.0
+    actual_period = min(period, len(closes) - 1)
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(0.0, d) for d in deltas]
+    losses = [max(0.0, -d) for d in deltas]
+
+    avg_gain = mean(gains[:actual_period]) if gains else 0.0
+    avg_loss = mean(losses[:actual_period]) if losses else 0.0
+
+    for i in range(actual_period, len(deltas)):
+        avg_gain = (avg_gain * (actual_period - 1) + gains[i]) / actual_period
+        avg_loss = (avg_loss * (actual_period - 1) + losses[i]) / actual_period
+
+    if avg_loss == 0.0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return round(100.0 - (100.0 / (1.0 + rs)), 2)
+
+
+def _detect_rsi_divergence(closed_rows: List[Dict[str, float]], period: int = 14) -> str:
+    """
+    Detects regular divergence between price and RSI in the recent window.
+    Returns 'BEARISH_DIV', 'BULLISH_DIV', or 'NONE'.
+    """
+    if len(closed_rows) < 8:
+        return "NONE"
+
+    window = closed_rows[-20:]
+    closes = [r["close"] for r in window]
+
+    rsi_vals = []
+    for i in range(4, len(closes) + 1):
+        rsi_vals.append(_calculate_rsi(closes[:i], period=min(period, i - 1)))
+
+    if len(rsi_vals) < 5:
+        return "NONE"
+
+    curr_price = closes[-1]
+    curr_rsi = rsi_vals[-1]
+
+    prev_prices = closes[-10:-2]
+    prev_rsis = rsi_vals[-10:-2] if len(rsi_vals) >= 10 else rsi_vals[:-2]
+
+    if not prev_prices or not prev_rsis:
+        return "NONE"
+
+    max_prev_price = max(prev_prices)
+    max_prev_rsi = max(prev_rsis)
+    min_prev_price = min(prev_prices)
+    min_prev_rsi = min(prev_rsis)
+
+    # Bearish Divergence: Price higher than previous peak, but RSI lower than previous peak (RSI >= 58)
+    if curr_price >= max_prev_price and curr_rsi < max_prev_rsi and curr_rsi >= 58.0:
+        return "BEARISH_DIV"
+
+    # Bullish Divergence: Price lower than previous trough, but RSI higher than previous trough (RSI <= 42)
+    if curr_price <= min_prev_price and curr_rsi > min_prev_rsi and curr_rsi <= 42.0:
+        return "BULLISH_DIV"
+
+    return "NONE"
+
+
+def _rsi_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[Dict[str, float]]) -> Dict[str, Any]:
+    if not closed_15m:
+        return {
+            "valid": False,
+            "rsi_15m": 50.0,
+            "rsi_1h": 50.0,
+            "is_overbought": False,
+            "is_oversold": False,
+            "divergence": "NONE"
+        }
+
+    closes_15m = [r["close"] for r in closed_15m]
+    closes_1h = [r["close"] for r in closed_1h] if closed_1h else closes_15m
+
+    rsi_15m = _calculate_rsi(closes_15m, period=14)
+    rsi_1h = _calculate_rsi(closes_1h, period=14)
+    divergence = _detect_rsi_divergence(closed_15m, period=14)
+
+    is_ob = rsi_15m >= 70.0 or rsi_1h >= 70.0
+    is_os = rsi_15m <= 30.0 or rsi_1h <= 30.0
+
+    return {
+        "valid": True,
+        "rsi_15m": rsi_15m,
+        "rsi_1h": rsi_1h,
+        "is_overbought": is_ob,
+        "is_oversold": is_os,
+        "divergence": divergence
+    }
+
+
+def _bollinger_analysis(closed_rows: List[Dict[str, float]], period: int = 20, num_std: float = 2.0) -> Dict[str, Any]:
+    if not closed_rows or len(closed_rows) < 3:
+        return {
+            "valid": False,
+            "upper": 0.0,
+            "mid": 0.0,
+            "lower": 0.0,
+            "percent_b": 0.5,
+            "bandwidth": 0.0,
+            "is_overextended_upper": False,
+            "is_overextended_lower": False,
+            "is_squeeze": False
+        }
+
+    window = closed_rows[-period:]
+    closes = [r["close"] for r in window]
+    mid = mean(closes)
+    std = pstdev(closes) if len(closes) > 1 else 0.0
+    upper = mid + (num_std * std)
+    lower = mid - (num_std * std)
+    curr = closes[-1]
+
+    band_range = max(upper - lower, 1e-12)
+    percent_b = (curr - lower) / band_range
+    bandwidth = (band_range / mid * 100.0) if mid > 0 else 0.0
+
+    return {
+        "valid": True,
+        "upper": round(upper, 6),
+        "mid": round(mid, 6),
+        "lower": round(lower, 6),
+        "percent_b": round(percent_b, 4),
+        "bandwidth": round(bandwidth, 2),
+        "is_overextended_upper": percent_b >= 1.0,
+        "is_overextended_lower": percent_b <= 0.0,
+        "is_squeeze": bandwidth < 3.5
+    }
+
+
+def _calculate_ema(closes: List[float], period: int) -> float:
+    if not closes:
+        return 0.0
+    if len(closes) < period:
+        return mean(closes)
+    multiplier = 2.0 / (period + 1.0)
+    ema = mean(closes[:period])
+    for price in closes[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+
+def _ema_trend_analysis(closed_rows: List[Dict[str, float]]) -> Dict[str, Any]:
+    if not closed_rows or len(closed_rows) < 3:
+        return {
+            "valid": False,
+            "ema_20": 0.0,
+            "ema_50": 0.0,
+            "trend": "NEUTRAL"
+        }
+
+    closes = [r["close"] for r in closed_rows]
+    curr = closes[-1]
+    ema_20 = _calculate_ema(closes, 20)
+    ema_50 = _calculate_ema(closes, 50)
+
+    if curr > ema_20 > ema_50:
+        trend = "STRONG_UPTREND"
+    elif curr < ema_20 < ema_50:
+        trend = "STRONG_DOWNTREND"
+    elif curr > ema_20:
+        trend = "MILD_UPTREND"
+    elif curr < ema_20:
+        trend = "MILD_DOWNTREND"
+    else:
+        trend = "NEUTRAL"
+
+    return {
+        "valid": True,
+        "ema_20": round(ema_20, 6),
+        "ema_50": round(ema_50, 6),
+        "trend": trend
+    }
+
+
 def compute_market_features(
     candles_by_tf: Dict[str, Iterable[Dict[str, Any]]],
     funding: Dict[str, Any],
@@ -273,6 +452,13 @@ def compute_market_features(
     impulse_wave = _impulse_wave_analysis(closed_15m, closed_1h, last_close)
     funding_sent = _funding_sentiment(funding_rate)
 
+    atr_val = max(float(timeframes.get("1h", {}).get("atr", 0.0) or 0.0), float(timeframes.get("15m", {}).get("atr", 0.0) or 0.0))
+
+    # Phase 2 Indicators: RSI Divergence, Bollinger Bands, EMA Trend
+    rsi = _rsi_analysis(closed_15m, closed_1h)
+    bollinger = _bollinger_analysis(closed_15m or closed_1h)
+    ema_trend = _ema_trend_analysis(closed_15m or closed_1h)
+
     return {
         "fresh": fresh,
         "timeframes": timeframes,
@@ -281,9 +467,13 @@ def compute_market_features(
         "open_interest": oi,
         "depth_imbalance": imbalance,
         "spread_pct": spread,
+        "atr": atr_val,
         "atr_to_friction": atr_pct / friction_pct if friction_pct > 0 else 0.0,
         "fibonacci": fibonacci,
-        "impulse_wave": impulse_wave
+        "impulse_wave": impulse_wave,
+        "rsi": rsi,
+        "bollinger": bollinger,
+        "ema_trend": ema_trend
     }
 
 

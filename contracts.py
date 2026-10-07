@@ -25,6 +25,7 @@ class DirectionMode(str, Enum):
 
 class ExitPolicy(str, Enum):
     MANUAL_ONLY = "MANUAL_ONLY"
+    AUTO_TPSL = "AUTO_TPSL"
 
 
 class TradeAction(str, Enum):
@@ -34,3 +35,12 @@ class TradeAction(str, Enum):
     CLOSE_LONG = "CLOSE_LONG"
     NO_NEW_RISK = "NO_NEW_RISK"
     NO_CHANGE = "NO_CHANGE"
+
+
+class PlaybookType(str, Enum):
+    PUMP_EXHAUSTION = "PUMP_EXHAUSTION"
+    SUPPORT_PULLBACK = "SUPPORT_PULLBACK"
+    BREAKDOWN_RETEST = "BREAKDOWN_RETEST"
+    FUNDING_SQUEEZE = "FUNDING_SQUEEZE"
+    NONE = "NONE"
+

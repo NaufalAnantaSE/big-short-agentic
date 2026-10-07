@@ -23,7 +23,17 @@ def humanize_ai_decision(
     fibonacci: Optional[Dict[str, Any]] = None,
     impulse_wave: Optional[Dict[str, Any]] = None,
     funding_sentiment: Optional[str] = None,
-    funding_rate: Optional[float] = None
+    funding_rate: Optional[float] = None,
+    take_profit_price: Optional[float] = None,
+    stop_loss_price: Optional[float] = None,
+    tp_percent: Optional[float] = None,
+    sl_percent: Optional[float] = None,
+    risk_amount_usdt: Optional[float] = None,
+    potential_profit_usdt: Optional[float] = None,
+    rsi: Optional[Dict[str, Any]] = None,
+    bollinger: Optional[Dict[str, Any]] = None,
+    ema_trend: Optional[Dict[str, Any]] = None,
+    playbook: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Produces a senior-friendly narrative card with high legibility and clear, empathetic explanations.
@@ -154,7 +164,53 @@ def humanize_ai_decision(
             funding_note = f"Biaya Pasar (Funding Rate): Waspada short squeeze{fr_str}."
             market_notes.append(funding_note)
 
-    # 4. Simple explanation of technical evidence
+    # 4. RSI, Bollinger Bands & Trend Notes
+    rsi_note = ""
+    if rsi and rsi.get("valid"):
+        val_15m = rsi.get("rsi_15m", 50.0)
+        div = rsi.get("divergence", "NONE")
+        if div == "BEARISH_DIV":
+            rsi_note = f"Analisa RSI: Terdeteksi pelemahan daya beli (Bearish Divergence, RSI 15m: {val_15m:.1f}), sinyal kuat pembalikan turun."
+        elif div == "BULLISH_DIV":
+            rsi_note = f"Analisa RSI: Terdeteksi pantulan daya beli (Bullish Divergence, RSI 15m: {val_15m:.1f}), potensi pantulan naik."
+        elif rsi.get("is_overbought"):
+            rsi_note = f"Analisa RSI: Kekuatan pasar mencapai area jenuh beli (RSI: {val_15m:.1f}), rawan aksi ambil untung."
+        elif rsi.get("is_oversold"):
+            rsi_note = f"Analisa RSI: Kekuatan pasar berada di area jenuh jual (RSI: {val_15m:.1f}), tekanan jual mulai mereda."
+        if rsi_note:
+            market_notes.append(rsi_note)
+
+    bb_note = ""
+    if bollinger and bollinger.get("valid"):
+        pb = float(bollinger.get("percent_b", 0.5) or 0.5)
+        if bollinger.get("is_overextended_upper"):
+            bb_note = f"Bollinger Bands: Harga menembus batas pita atas (%B: {pb:.2f}), lonjakan harga berada di titik ekstrem."
+        elif bollinger.get("is_overextended_lower"):
+            bb_note = f"Bollinger Bands: Harga menembus batas pita bawah (%B: {pb:.2f}), koreksi mencapai titik ekstrem."
+        elif bollinger.get("is_squeeze"):
+            bb_note = "Bollinger Bands: Pita volatilitas sedang menyempit (Squeeze), bersiap menghadapi lonjakan pergerakan baru."
+        if bb_note:
+            market_notes.append(bb_note)
+
+    ema_note = ""
+    if ema_trend and ema_trend.get("valid"):
+        tr = ema_trend.get("trend", "NEUTRAL")
+        if tr == "STRONG_UPTREND":
+            ema_note = "Tren Makro (EMA): Tren naik kuat (Harga > EMA20 > EMA50)."
+        elif tr == "STRONG_DOWNTREND":
+            ema_note = "Tren Makro (EMA): Tren turun dominan (Harga < EMA20 < EMA50)."
+        if ema_note:
+            market_notes.append(ema_note)
+
+    # 5. Autonomous Multi-Strategy Playbook Note
+    playbook_note = ""
+    if playbook and isinstance(playbook, dict) and playbook.get("playbook") and playbook.get("playbook") != "NONE":
+        pb_title = playbook.get("title_id", "")
+        pb_score = playbook.get("score", 0)
+        playbook_note = f"Strategi Otonom Terpilih: {pb_title} (Tingkat Kecocokan: {pb_score}%)."
+        market_notes.insert(0, playbook_note)
+
+    # 6. Simple explanation of technical evidence
     plain_reason = ""
     evidence_lower = (evidence or "").lower()
     risk_lower = (risk_factors or "").lower()
@@ -172,7 +228,17 @@ def humanize_ai_decision(
     else:
         plain_reason = evidence if evidence else "AI telah mengkaji struktur pergerakan koin dan memilih opsi paling berhati-hati."
 
-    # 5. Senior-friendly capital transparency note
+    # 7. Automated TP/SL & Risk Note
+    tpsl_note = ""
+    if take_profit_price and stop_loss_price:
+        tp_str = f"${take_profit_price:,.6f}" if take_profit_price < 1 else f"${take_profit_price:,.2f}"
+        sl_str = f"${stop_loss_price:,.6f}" if stop_loss_price < 1 else f"${stop_loss_price:,.2f}"
+        tp_p_str = f" (+{tp_percent:.1f}%)" if tp_percent is not None else ""
+        sl_p_str = f" (-{sl_percent:.1f}%)" if sl_percent is not None else ""
+        tpsl_note = f"Manajemen Risiko Otomatis: Ambil Untung (TP) di {tp_str}{tp_p_str}, Batas Pengaman Rugi (SL) di {sl_str}{sl_p_str}."
+        market_notes.append(tpsl_note)
+
+    # 8. Senior-friendly capital transparency note
     est_idr = int(margin_per_pos * 16200)
     capital_note = f"Modal dipakai: ${margin_per_pos:.2f} USDT (sekitar Rp {est_idr:,}). Posisi dikelola secara bertahap tanpa menyentuh saldo simpanan lainnya."
 
@@ -197,5 +263,23 @@ def humanize_ai_decision(
         "funding_note": funding_note,
         "fibonacci_zone": fibonacci.get("zone") if fibonacci else None,
         "fibonacci_retracement": fibonacci.get("retracement_ratio") if fibonacci else None,
-        "exhaustion_score": impulse_wave.get("exhaustion_score") if impulse_wave else None
+        "exhaustion_score": impulse_wave.get("exhaustion_score") if impulse_wave else None,
+        "take_profit_price": take_profit_price,
+        "stop_loss_price": stop_loss_price,
+        "tp_percent": tp_percent,
+        "sl_percent": sl_percent,
+        "tpsl_note": tpsl_note,
+        "risk_amount_usdt": risk_amount_usdt,
+        "potential_profit_usdt": potential_profit_usdt,
+        "rsi": rsi,
+        "bollinger": bollinger,
+        "ema_trend": ema_trend,
+        "rsi_note": rsi_note,
+        "bb_note": bb_note,
+        "ema_note": ema_note,
+        "playbook": playbook,
+        "playbook_note": playbook_note,
+        "playbook_title": playbook.get("title_id") if isinstance(playbook, dict) else None,
+        "playbook_explanation": playbook.get("explanation_id") if isinstance(playbook, dict) else None,
+        "playbook_score": playbook.get("score") if isinstance(playbook, dict) else None
     }

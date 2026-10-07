@@ -47,9 +47,11 @@ class AuditLogger:
         client_order_id: str,
         order_id: Optional[Any],
         status: str,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        stop_loss_price: Optional[float] = None,
+        take_profit_price: Optional[float] = None
     ):
-        cls.log_event("ORDER_SUBMISSION", {
+        payload = {
             "symbol": symbol,
             "side": side,
             "position_side": position_side,
@@ -59,7 +61,12 @@ class AuditLogger:
             "client_order_id": client_order_id,
             "order_id": str(order_id) if order_id else None,
             "status": status
-        }, session_id=session_id)
+        }
+        if stop_loss_price is not None:
+            payload["stop_loss_price"] = stop_loss_price
+        if take_profit_price is not None:
+            payload["take_profit_price"] = take_profit_price
+        cls.log_event("ORDER_SUBMISSION", payload, session_id=session_id)
 
     @classmethod
     def log_ai_evaluation(

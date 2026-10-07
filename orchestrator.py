@@ -12,7 +12,8 @@ from scanner import MarketScanner, CandidatePair
 from ai_evaluator import AIEvaluator, AIEvaluationResult
 from audit_logger import AuditLogger
 from market_features import build_candidate_features, hard_gate
-from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, TradeAction
+from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, TradeAction, PlaybookType
+from strategy_playbook import evaluate_playbooks, PlaybookMatch
 
 class SessionState(BaseModel):
     session_id: str
@@ -154,6 +155,7 @@ class SessionOrchestrator:
                     "ai_evidence": "Deterministic hard gate rejected candidate",
                     "risk_factors": ",".join(gate_reasons),
                     "market_features": market_features,
+                    "playbook": None,
                     "executed": False,
                     "order_id": None,
                 })
@@ -163,6 +165,15 @@ class SessionOrchestrator:
                 }, session_id=self.current_session.session_id)
                 continue
 
+            # Autonomous Multi-Strategy Playbook Classification
+            playbook_match = evaluate_playbooks(
+                symbol=cand.symbol,
+                price=cand.last_price,
+                change_24h=cand.price_change_percent,
+                spread_pct=cand.spread_percent,
+                market_features=market_features
+            )
+
             # Step 2: AI Evaluation via 9Router
             candidate_payload = {
                 "symbol": cand.symbol,
@@ -171,6 +182,7 @@ class SessionOrchestrator:
                 "spread_pct": cand.spread_percent,
                 "klines_15m_closes": closes[-5:] if closes else [],
                 "market_features": market_features,
+                "playbook": playbook_match.model_dump(),
             }
             if deep_count < MAX_DEEP_CANDIDATES and cycle_tokens < MAX_CYCLE_TOKENS:
                 ai_res = self.ai.evaluate_adversarial(candidate_payload)
@@ -197,14 +209,25 @@ class SessionOrchestrator:
                 latency_ms=ai_res.latency_ms
             )
 
-            # Step 3: Sizing
+            # Step 3: Sizing with Dynamic ATR TP/SL & Risk Calculations
+            is_short_intent = (ai_res.decision == "ENTER_SHORT")
+            is_long_intent = (ai_res.decision == "ENTER_LONG")
+            pos_dir = "LONG" if is_long_intent else "SHORT"
+            atr_val = market_features.get("atr") if isinstance(market_features, dict) else None
+
+            # Recommended Risk:Reward from matched playbook
+            target_rr = playbook_match.recommended_rr if playbook_match.recommended_rr else 2.0
+
             sizing = SizingCalculator.calculate_lot(
                 symbol=cand.symbol,
                 margin_usdt=self.current_session.margin_per_pos,
                 target_leverage=self.current_session.leverage,
                 current_price=cand.last_price,
                 contract_info=cand.contract_info,
-                max_allowed_leverage=20
+                max_allowed_leverage=20,
+                direction=pos_dir,
+                atr=atr_val,
+                target_rr=target_rr
             )
 
             execution_report: Dict[str, Any] = {
@@ -213,14 +236,19 @@ class SessionOrchestrator:
                 "ai_decision": ai_res.decision,
                 "ai_confidence": ai_res.confidence,
                 "ai_evidence": ai_res.key_evidence,
+                "playbook": playbook_match.model_dump(),
                 "sizing": sizing.model_dump(),
+                "stop_loss_price": sizing.stop_loss_price,
+                "take_profit_price": sizing.take_profit_price,
+                "sl_percent": sizing.sl_percent,
+                "tp_percent": sizing.tp_percent,
+                "risk_amount_usdt": sizing.risk_amount_usdt,
+                "potential_profit_usdt": sizing.potential_profit_usdt,
                 "executed": False,
                 "order_id": None
             }
 
             # Determine trade direction permissions
-            is_short_intent = (ai_res.decision == "ENTER_SHORT")
-            is_long_intent = (ai_res.decision == "ENTER_LONG")
             session_dir = getattr(self.current_session, "direction_mode", "SHORT")
 
             direction_allowed = (
@@ -240,9 +268,10 @@ class SessionOrchestrator:
                     execution_report["executed"] = False
                     execution_report["dry_run"] = True
                     execution_report["client_order_id"] = client_order_id
+                    tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
                     execution_report["message"] = (
                         f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
-                        f"Submit {target_pos_side} MARKET order: {sizing.quantity} {cand.symbol}"
+                        f"Submit {target_pos_side} MARKET order: {sizing.quantity} {cand.symbol}{tpsl_info}"
                     )
                     self.current_session.filled_count += 1
                     self.current_session.executed_symbols.append(cand.symbol)
@@ -268,7 +297,9 @@ class SessionOrchestrator:
                             position_side=target_pos_side,
                             order_type="MARKET",
                             quantity=sizing.quantity,
-                            client_order_id=client_order_id
+                            client_order_id=client_order_id,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price
                         )
                         order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
                         order_id_str = str(order_id_raw)
@@ -289,7 +320,9 @@ class SessionOrchestrator:
                             client_order_id=client_order_id,
                             order_id=order_id_str,
                             status="FILLED",
-                            session_id=self.current_session.session_id
+                            session_id=self.current_session.session_id,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price
                         )
                     except BingXAPIError as e:
                         execution_report["executed"] = False

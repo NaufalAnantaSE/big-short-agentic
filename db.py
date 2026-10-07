@@ -4,7 +4,7 @@ import os
 import sqlite3
 import time
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from security import hash_password, encrypt_credential, decrypt_credential
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bot.db")
@@ -101,6 +101,15 @@ def init_db():
             cursor.execute("ALTER TABLE sessions ADD COLUMN direction_mode TEXT NOT NULL DEFAULT 'SHORT'")
         if "exit_policy" not in existing_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN exit_policy TEXT NOT NULL DEFAULT 'MANUAL_ONLY'")
+
+        # Safe schema evolution for order_records
+        cursor.execute("PRAGMA table_info(order_records)")
+        existing_order_cols = {r[1] for r in cursor.fetchall()}
+        if "stop_loss_price" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN stop_loss_price REAL")
+        if "take_profit_price" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN take_profit_price REAL")
+
         conn.commit()
 
         # Ensure default admin account exists
@@ -108,7 +117,7 @@ def init_db():
         cursor.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
         row = cursor.fetchone()
         if not row:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             default_pass = "naufal2026admin"
             cursor.execute("""
             INSERT INTO users (username, password_hash, full_name, role, is_demo, created_at)
@@ -120,7 +129,7 @@ def init_db():
         cursor.execute("SELECT id FROM users WHERE username = 'naufal' LIMIT 1")
         row_naufal = cursor.fetchone()
         if not row_naufal:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             default_pass = "naufal2026trader"
             cursor.execute("""
             INSERT INTO users (username, password_hash, full_name, role, is_demo, created_at)
@@ -132,7 +141,7 @@ init_db()
 
 # User repository functions
 def create_user(username: str, password: str, full_name: str = "", role: str = "user") -> int:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -334,15 +343,17 @@ def record_order(
     order_id: Optional[str],
     status: str,
     side: str = "SELL",
-    position_side: str = "SHORT"
+    position_side: str = "SHORT",
+    stop_loss_price: Optional[float] = None,
+    take_profit_price: Optional[float] = None
 ):
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-        INSERT INTO order_records (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, now))
+        INSERT INTO order_records (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, created_at, stop_loss_price, take_profit_price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, now, stop_loss_price, take_profit_price))
         conn.commit()
 
 def get_user_orders(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:

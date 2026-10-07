@@ -3,6 +3,7 @@
 import hmac
 import hashlib
 import time
+import json
 import httpx
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
@@ -150,10 +151,12 @@ class BingXClient:
         quantity: float,
         client_order_id: str,
         price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
+        take_profit_price: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        Submits an order to BingX Swap V2.
-        Enforces positionSide='SHORT' and side='SELL' for short-only entry agent in Hedge mode.
+        Submits an order to BingX Swap V2 with optional attached Stop Loss / Take Profit.
+        Enforces proper side and position_side pairing for Hedge mode.
         """
         norm_side = side.upper()
         norm_pos_side = position_side.upper()
@@ -174,6 +177,59 @@ class BingXClient:
         }
         if price is not None:
             params["price"] = price
+
+        if stop_loss_price is not None:
+            params["stopLoss"] = json.dumps({
+                "type": "STOP_MARKET",
+                "stopPrice": float(stop_loss_price),
+                "workingType": "MARK_PRICE"
+            })
+        if take_profit_price is not None:
+            params["takeProfit"] = json.dumps({
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": float(take_profit_price),
+                "workingType": "MARK_PRICE"
+            })
+
+        return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)
+
+    def place_tpsl_order(
+        self,
+        symbol: str,
+        position_side: str,
+        trigger_type: str,
+        stop_price: float,
+        client_order_id: str,
+        working_type: str = "MARK_PRICE",
+        quantity: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Submits an independent position-level Stop Loss or Take Profit trigger order in Hedge mode.
+        For SHORT position: side='BUY'
+        For LONG position: side='SELL'
+        """
+        norm_pos_side = position_side.upper()
+        if norm_pos_side not in ("SHORT", "LONG"):
+            raise ValueError(f"Invalid position_side for TP/SL trigger: '{position_side}'")
+
+        order_side = "BUY" if norm_pos_side == "SHORT" else "SELL"
+        trigger_norm = trigger_type.upper()
+        if trigger_norm not in ("STOP_MARKET", "TAKE_PROFIT_MARKET"):
+            raise ValueError(f"Invalid trigger_type: '{trigger_type}'. Must be STOP_MARKET or TAKE_PROFIT_MARKET.")
+
+        params = {
+            "symbol": symbol,
+            "side": order_side,
+            "positionSide": norm_pos_side,
+            "type": trigger_norm,
+            "stopPrice": float(stop_price),
+            "workingType": working_type,
+            "clientOrderId": client_order_id.lower()[:40],
+            "closePosition": "true",
+        }
+        if quantity is not None and quantity > 0:
+            params["quantity"] = quantity
+            params["reduceOnly"] = "true"
 
         return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)
 
