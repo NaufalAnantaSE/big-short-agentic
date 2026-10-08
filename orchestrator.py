@@ -562,16 +562,35 @@ class SessionOrchestrator:
             )
 
             atr_val = market_features.get("atr") if isinstance(market_features, dict) else None
+
+            # Safe extraction of nested indicator features
+            rsi_raw = market_features.get("rsi") if isinstance(market_features, dict) else None
+            if isinstance(rsi_raw, dict):
+                rsi_val = float(rsi_raw.get("rsi_15m", 50.0) or 50.0)
+            elif isinstance(rsi_raw, (int, float)):
+                rsi_val = float(rsi_raw)
+            else:
+                rsi_val = 50.0
+
+            vol_raw = market_features.get("volume_sma_ratio") if isinstance(market_features, dict) else None
+            vol_ratio = float(vol_raw) if isinstance(vol_raw, (int, float)) else 1.0
+
+            fr_raw = market_features.get("funding_rate") if isinstance(market_features, dict) else None
+            funding_val = float(fr_raw) if isinstance(fr_raw, (int, float)) else 0.0
+
+            fib_raw = market_features.get("fibonacci") if isinstance(market_features, dict) else None
+            fib_zone = fib_raw.get("zone", "UNKNOWN") if isinstance(fib_raw, dict) else "UNKNOWN"
+
             summary = {
                 "symbol": cand.symbol,
                 "price_change_24h": cand.price_change_percent,
                 "current_price": cand.last_price,
                 "spread_pct": cand.spread_percent,
                 "atr_pct": round((float(atr_val) / cand.last_price) * 100.0, 2) if atr_val and cand.last_price > 0 else 0.0,
-                "rsi_15m": round(market_features.get("rsi", 50.0), 1) if market_features else 50.0,
-                "funding_rate": market_features.get("funding_rate", 0.0) if market_features else 0.0,
-                "volume_sma_ratio": round(market_features.get("volume_sma_ratio", 1.0), 2) if market_features else 1.0,
-                "fib_zone": market_features.get("fibonacci", {}).get("zone", "UNKNOWN") if market_features else "UNKNOWN",
+                "rsi_15m": round(rsi_val, 1),
+                "funding_rate": funding_val,
+                "volume_sma_ratio": round(vol_ratio, 2),
+                "fib_zone": str(fib_zone),
                 "playbook_matched": str(playbook_match.playbook) if playbook_match else "NONE",
             }
 
