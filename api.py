@@ -328,7 +328,9 @@ def get_admin_ai_settings(admin: Dict[str, Any] = Depends(require_admin)):
 @app.put("/api/admin/ai-settings")
 def update_admin_ai_settings(req: UpdateAISettingsRequest, admin: Dict[str, Any] = Depends(require_admin)):
     try:
-        return update_ai_settings(req.model)
+        res = update_ai_settings(req.model)
+        tenant_manager.reload_ai_settings()
+        return res
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

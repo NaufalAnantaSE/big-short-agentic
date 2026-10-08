@@ -569,9 +569,20 @@ class TenantSessionManager:
         
         return {"status": "IDLE", "message": "Tidak ada sesi aktif yang sedang berjalan."}
 
+    def reload_ai_settings(self):
+        """Propagates updated AI settings to all active orchestrator instances."""
+        ai_cfg = get_ai_settings()
+        for orch in self._orchestrator_pool.values():
+            orch.config.ai_model_name = ai_cfg["model"]
+            orch.ai.config.ai_model_name = ai_cfg["model"]
+
     def run_cycle_for_user(self, user_id: int, dry_run: bool = False) -> Dict[str, Any]:
         """Executes one scan-evaluate-execute cycle for this user."""
         orch = self.get_orchestrator(user_id)
+        # Always synchronize dynamic AI model setting configured by admin
+        ai_cfg = get_ai_settings()
+        orch.config.ai_model_name = ai_cfg["model"]
+        orch.ai.config.ai_model_name = ai_cfg["model"]
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
             if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
