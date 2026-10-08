@@ -93,11 +93,13 @@ def test_signed_request_urlencodes_tpsl_json(mocker):
     # No illegal characters may appear raw in the transmitted query string
     for ch in (" ", "{", "}", '"', "<", ">"):
         assert ch not in query, f"illegal character {ch!r} in signed URL query"
+    encoded_query, sig = query.rsplit("&signature=", 1)
     # stopLoss/takeProfit must round-trip as valid JSON after decoding
-    params = dict(parse_qsl(query))
+    params = dict(parse_qsl(encoded_query))
     assert jsonlib.loads(params["stopLoss"])["type"] == "STOP_MARKET"
     assert jsonlib.loads(params["takeProfit"])["type"] == "TAKE_PROFIT_MARKET"
-    # The signature must match the exact transmitted query bytes
-    raw_query, sig = query.rsplit("&signature=", 1)
-    expected = hmaclib.new(b"mock_secret", raw_query.encode("utf-8"), hashlib.sha256).hexdigest()
+    assert " " not in params["stopLoss"], "stopLoss JSON must be compact without spaces"
+    assert " " not in params["takeProfit"], "takeProfit JSON must be compact without spaces"
+    # Per BingX spec: signature is generated from unencoded raw parameter string
+    expected = BingXClient.sign_params(params, "mock_secret")
     assert sig == expected

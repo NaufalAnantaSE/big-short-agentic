@@ -14,6 +14,7 @@ from orchestrator import SessionOrchestrator, SessionState
 from plain_explainer import humanize_ai_decision
 from audit_logger import AuditLogger
 from ai_settings import get_ai_settings
+from contracts import ExecutionMode, Environment, DirectionMode
 import db
 
 class TenantSessionManager:

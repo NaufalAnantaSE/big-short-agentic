@@ -24,25 +24,26 @@ class BingXClient:
         self.client = httpx.Client(timeout=10.0)
 
     @staticmethod
-    def _build_query_string(params: Dict[str, Any]) -> str:
-        """Builds a URL-encoded query string with keys sorted alphabetically.
-
-        The exact string returned here is both signed (HMAC-SHA256) and sent
-        over the wire, so the signature always matches the transmitted bytes.
-        Manual f-string interpolation must NOT be used: values such as the
-        JSON-encoded stopLoss/takeProfit payloads contain spaces, quotes and
-        braces that are illegal in a URL and would break the signature.
+    def _build_raw_param_string(params: Dict[str, Any]) -> str:
+        """Builds canonical raw parameter string sorted alphabetically by key without URL-encoding.
+        Per BingX API specification: 'Do NOT URL-encode parameter values before signing.'
         """
+        sorted_items = sorted(params.items(), key=lambda kv: kv[0])
+        return "&".join(f"{k}={v}" for k, v in sorted_items)
+
+    @staticmethod
+    def _build_query_string(params: Dict[str, Any]) -> str:
+        """Builds a URL-encoded query string with keys sorted alphabetically for HTTP wire transport."""
         sorted_items = sorted(params.items(), key=lambda kv: kv[0])
         return urlencode([(k, v) for k, v in sorted_items])
 
     @staticmethod
     def sign_params(params: Dict[str, Any], secret_key: str) -> str:
-        """Sorts parameters alphabetically, URL-encodes the query string, and generates HMAC-SHA256 hex digest."""
-        query_str = BingXClient._build_query_string(params)
+        """Sorts parameters alphabetically, builds raw canonical string, and generates HMAC-SHA256 hex digest."""
+        raw_str = BingXClient._build_raw_param_string(params)
         return hmac.new(
             secret_key.encode("utf-8"),
-            query_str.encode("utf-8"),
+            raw_str.encode("utf-8"),
             hashlib.sha256
         ).hexdigest()
 
@@ -66,17 +67,17 @@ class BingXClient:
             req_params["timestamp"] = int(time.time() * 1000)
             req_params["recvWindow"] = 10000
             
-            # Build the URL-encoded query string once; the signature is computed
-            # over this exact string and the same string is transmitted, so the
-            # signature always matches the bytes the server receives.
-            query_str = self._build_query_string(req_params)
+            # Per BingX API spec: signature is calculated over raw unencoded parameters,
+            # while the wire transmission URL is URL-encoded for valid HTTP transport.
+            raw_str = self._build_raw_param_string(req_params)
             signature = hmac.new(
                 self.config.secret_key.encode("utf-8"),
-                query_str.encode("utf-8"),
+                raw_str.encode("utf-8"),
                 hashlib.sha256
             ).hexdigest()
 
-            final_url = f"{url}?{query_str}&signature={signature}"
+            encoded_query = self._build_query_string(req_params)
+            final_url = f"{url}?{encoded_query}&signature={signature}"
             send_params = None
         else:
             final_url = url
@@ -196,13 +197,13 @@ class BingXClient:
                 "type": "STOP_MARKET",
                 "stopPrice": float(stop_loss_price),
                 "workingType": "MARK_PRICE"
-            })
+            }, separators=(',', ':'))
         if take_profit_price is not None:
             params["takeProfit"] = json.dumps({
                 "type": "TAKE_PROFIT_MARKET",
                 "stopPrice": float(take_profit_price),
                 "workingType": "MARK_PRICE"
-            })
+            }, separators=(',', ':'))
 
         return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)
 
