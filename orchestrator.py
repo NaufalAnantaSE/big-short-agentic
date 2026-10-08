@@ -453,7 +453,7 @@ class SessionOrchestrator:
 
             try:
                 w_klines = self.client.get_klines(entry.symbol, interval="15m", limit=15)
-                w_depth = self.client.get_depth(entry.symbol, limit=2)
+                w_depth = self.client.get_depth(entry.symbol, limit=5)
                 bids = w_depth.get("bids", []) if isinstance(w_depth, dict) else []
                 asks = w_depth.get("asks", []) if isinstance(w_depth, dict) else []
                 bid1 = float(bids[0][0]) if bids else entry.initial_price

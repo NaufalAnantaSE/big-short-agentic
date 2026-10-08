@@ -147,7 +147,9 @@ class BingXClient:
 
     def get_depth(self, symbol: str, limit: int = 5) -> Dict[str, Any]:
         """Queries orderbook depth."""
-        return self._request("GET", "/openApi/swap/v2/quote/depth", params={"symbol": symbol, "limit": limit}, signed=False)
+        valid_limits = (5, 10, 20, 50, 100, 500, 1000)
+        safe_limit = limit if limit in valid_limits else 5
+        return self._request("GET", "/openApi/swap/v2/quote/depth", params={"symbol": symbol, "limit": safe_limit}, signed=False)
 
     def get_klines(self, symbol: str, interval: str = "15m", limit: int = 30) -> list:
         """Queries historical OHLCV klines."""

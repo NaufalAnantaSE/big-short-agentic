@@ -541,7 +541,7 @@ class WatchlistManager:
                     if entry.resting_order_price and entry.resting_order_price > 0:
                         try:
                             # Quick depth check
-                            depth = client.get_depth(entry.symbol, limit=1)
+                            depth = client.get_depth(entry.symbol, limit=5)
                             best_bid = float(depth.get("bids", [[0, 0]])[0][0]) if depth.get("bids") else 0
                             if best_bid > entry.resting_order_price * 1.015:
                                 self.cancel_entry_resting_order(
