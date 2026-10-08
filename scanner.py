@@ -70,6 +70,7 @@ class MarketScanner:
         - MEME_ONLY: Restricts universe to memecoin tags.
         """
         active_mode = (mode or self.config.universe_mode).upper()
+        dir_norm = (direction or "SHORT").upper()
         min_pump = min_pump_pct if min_pump_pct is not None else self.config.min_pump_percent
         blacklist = set(self.config.majors_blacklist)
 
@@ -156,9 +157,43 @@ class MarketScanner:
                 contract_info=c
             ))
 
-        # Sort by price change descending (highest pumpers first for short exhaustion)
-        candidates.sort(key=lambda x: x.price_change_percent, reverse=True)
-        return candidates[:limit_candidates]
+        # Direction-aware ranking and balanced discovery
+        if dir_norm == "LONG":
+            # Favor healthy pullbacks (small absolute distance to mild baseline), not unconditional biggest losers
+            candidates.sort(key=lambda x: (abs(x.price_change_percent), -x.volume_24h_usdt))
+            return candidates[:limit_candidates]
+        elif dir_norm == "BOTH":
+            # Balanced discovery for BOTH mode: interleave top short candidates and top long pullbacks, deduped
+            cutoff = min_pump if (min_pump is not None and min_pump > 0.0) else -25.0
+            short_pool = [c for c in candidates if c.price_change_percent >= cutoff]
+            short_pool.sort(key=lambda x: (-x.price_change_percent, -x.volume_24h_usdt))
+
+            long_pool = [c for c in candidates if -20.0 <= c.price_change_percent <= 40.0]
+            long_pool.sort(key=lambda x: (abs(x.price_change_percent), -x.volume_24h_usdt))
+
+            seen_symbols: Set[str] = set()
+            balanced: List[CandidatePair] = []
+            max_len = max(len(short_pool), len(long_pool))
+            for i in range(max_len):
+                if i < len(short_pool):
+                    s_cand = short_pool[i]
+                    if s_cand.symbol not in seen_symbols:
+                        seen_symbols.add(s_cand.symbol)
+                        balanced.append(s_cand)
+                        if len(balanced) == limit_candidates:
+                            break
+                if i < len(long_pool):
+                    l_cand = long_pool[i]
+                    if l_cand.symbol not in seen_symbols:
+                        seen_symbols.add(l_cand.symbol)
+                        balanced.append(l_cand)
+                        if len(balanced) == limit_candidates:
+                            break
+            return balanced
+        else:  # SHORT
+            # Sort by price change descending (highest pumpers first for short exhaustion)
+            candidates.sort(key=lambda x: (-x.price_change_percent, -x.volume_24h_usdt))
+            return candidates[:limit_candidates]
 
     def scan_memecoins(self, limit_candidates: int = 5) -> List[CandidatePair]:
         """Convenience alias for MEME_ONLY scan mode."""

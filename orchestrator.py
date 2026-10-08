@@ -16,6 +16,19 @@ from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, Tra
 from strategy_playbook import evaluate_playbooks, PlaybookMatch
 from watchlist_manager import WatchlistManager
 
+
+def _evaluate_hard_gate(
+    market_features: Dict[str, Any],
+    max_spread_pct: float,
+    direction: str = "SHORT"
+) -> tuple[bool, list[str]]:
+    """Evaluates hard_gate with direction awareness, defaulting to SHORT."""
+    try:
+        return hard_gate(market_features, max_spread_pct, direction=direction)
+    except TypeError:
+        return hard_gate(market_features, max_spread_pct)
+
+
 class SessionState(BaseModel):
     session_id: str
     status: str = "IDLE"  # IDLE, ACTIVE_SEARCHING, EXECUTING_ENTRY, EXHAUSTED, TERMINATED
@@ -83,10 +96,11 @@ class SessionOrchestrator:
         }, session_id=session_id)
 
         # Startup reconciliation: Phase 2 feature, removed from hot path
+        self.watchlist.entries.clear()
         return self.current_session
 
     def stop_session(self) -> Optional[SessionState]:
-        """Terminates active session and cancels all linked resting orders."""
+        """Terminates active session, cancels all linked resting orders, and clears watchlist entries."""
         if self.current_session:
             self.current_session.status = "TERMINATED"
             for entry in self.watchlist.get_all_entries():
@@ -96,6 +110,7 @@ class SessionOrchestrator:
                     client=self.client,
                     session_id=self.current_session.session_id
                 )
+            self.watchlist.entries.clear()
         return self.current_session
 
     def _evaluate_and_execute_candidate(
@@ -111,6 +126,8 @@ class SessionOrchestrator:
         market_features: Dict[str, Any] = sc["market_features"]
         playbook_match = sc["playbook_match"]
         atr_val = sc["atr_val"]
+        cand_allowed = sc.get("allowed_directions", [])
+        cand_sugg = sc.get("suggested_direction", "UNKNOWN")
 
         candidate_payload = {
             "symbol": cand.symbol,
@@ -120,14 +137,24 @@ class SessionOrchestrator:
             "klines_15m_closes": closes[-5:] if closes else [],
             "market_features": market_features,
             "playbook": playbook_match.model_dump() if playbook_match else {},
+            "allowed_directions": cand_allowed,
+            "suggested_direction": cand_sugg,
         }
 
-        # Determine trade direction intent from candidate/features
-        init_dir = "LONG" if (getattr(self.current_session, "direction_mode", "SHORT") == "LONG") else "SHORT"
+        # Determine trade direction intent from candidate/features/session
+        session_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
+        if session_dir in ("LONG", "SHORT"):
+            target_eval_dir = session_dir
+        elif cand_sugg in ("LONG", "SHORT"):
+            target_eval_dir = cand_sugg
+        elif len(cand_allowed) == 1:
+            target_eval_dir = cand_allowed[0]
+        else:
+            target_eval_dir = "BOTH"
 
         if deep_mode:
             # Tier 2: Single structured dialectical deep evaluation
-            ai_res = self.ai.evaluate_deep_candidate(candidate_payload, direction=init_dir)
+            ai_res = self.ai.evaluate_deep_candidate(candidate_payload, direction=target_eval_dir)
         else:
             ai_res = self.ai.evaluate_candidate(
                 symbol=cand.symbol,
@@ -135,7 +162,8 @@ class SessionOrchestrator:
                 current_price=cand.last_price,
                 klines_summary=closes,
                 spread_pct=cand.spread_percent,
-                market_features=market_features
+                market_features=market_features,
+                direction=target_eval_dir
             )
 
         tokens_used = int(ai_res.usage.get("total_tokens", 0) or 0)
@@ -154,7 +182,24 @@ class SessionOrchestrator:
 
         is_short_intent = (ai_res.decision == "ENTER_SHORT")
         is_long_intent = (ai_res.decision == "ENTER_LONG")
-        pos_dir = "LONG" if is_long_intent else "SHORT"
+        is_wait_intent = (ai_res.decision == "WAIT")
+
+        if is_long_intent:
+            pos_dir = "LONG"
+        elif is_short_intent:
+            pos_dir = "SHORT"
+        elif is_wait_intent:
+            # Preserve candidate direction into WAIT watchlist; WAIT must NOT infer SHORT from decision!
+            if target_eval_dir in ("LONG", "SHORT"):
+                pos_dir = target_eval_dir
+            elif cand_sugg in ("LONG", "SHORT"):
+                pos_dir = cand_sugg
+            elif len(cand_allowed) == 1:
+                pos_dir = cand_allowed[0]
+            else:
+                pos_dir = "UNKNOWN"
+        else:
+            pos_dir = "UNKNOWN"
 
         target_rr = playbook_match.recommended_rr if playbook_match and playbook_match.recommended_rr else 2.0
         current_lev = self.current_session.leverage if self.current_session else 20
@@ -166,17 +211,29 @@ class SessionOrchestrator:
                 effective_target_lev = max(1, max_safe_lev)
 
         margin_per_pos = self.current_session.margin_per_pos if self.current_session else 5.0
-        sizing = SizingCalculator.calculate_lot(
-            symbol=cand.symbol,
-            margin_usdt=margin_per_pos,
-            target_leverage=effective_target_lev,
-            current_price=cand.last_price,
-            contract_info=cand.contract_info,
-            max_allowed_leverage=20,
-            direction=pos_dir,
-            atr=atr_val,
-            target_rr=target_rr
-        )
+        if pos_dir in ("LONG", "SHORT"):
+            sizing = SizingCalculator.calculate_lot(
+                symbol=cand.symbol,
+                margin_usdt=margin_per_pos,
+                target_leverage=effective_target_lev,
+                current_price=cand.last_price,
+                contract_info=cand.contract_info,
+                max_allowed_leverage=20,
+                direction=pos_dir,
+                atr=atr_val,
+                target_rr=target_rr
+            )
+        else:
+            sizing = SizingResult(
+                symbol=cand.symbol,
+                target_margin=margin_per_pos,
+                effective_leverage=effective_target_lev,
+                entry_price=cand.last_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"invalid_direction:{pos_dir}"
+            )
 
         execution_report: Dict[str, Any] = {
             "symbol": cand.symbol,
@@ -184,6 +241,7 @@ class SessionOrchestrator:
             "ai_decision": ai_res.decision,
             "ai_confidence": ai_res.confidence,
             "ai_evidence": ai_res.key_evidence,
+            "direction": pos_dir,
             "playbook": playbook_match.model_dump() if playbook_match else None,
             "sizing": sizing.model_dump(),
             "stop_loss_price": sizing.stop_loss_price,
@@ -196,18 +254,54 @@ class SessionOrchestrator:
             "order_id": None
         }
 
-        session_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
-        direction_allowed = (
-            (session_dir == "BOTH") or
-            (session_dir == "SHORT" and is_short_intent) or
-            (session_dir == "LONG" and is_long_intent)
+        # Gate enforcement just before execution/watchlist
+        direction_valid = pos_dir in ("LONG", "SHORT")
+        session_allowed = (
+            (session_dir == "BOTH" and direction_valid) or
+            (session_dir == "SHORT" and pos_dir == "SHORT") or
+            (session_dir == "LONG" and pos_dir == "LONG")
         )
+        candidate_allowed = (not cand_allowed) or (pos_dir in cand_allowed)
+        gate_ok = False
+        gate_reasons = []
+        if direction_valid:
+            gate_ok, gate_reasons = _evaluate_hard_gate(market_features, self.config.max_spread_pct, direction=pos_dir)
+
+        veto_reason = None
+        if is_short_intent or is_long_intent:
+            if not direction_valid:
+                veto_reason = f"invalid_or_unknown_direction:{pos_dir}"
+            elif not session_allowed:
+                veto_reason = f"direction_{pos_dir}_barred_in_{session_dir}_session"
+            elif not candidate_allowed:
+                veto_reason = f"direction_{pos_dir}_barred_for_candidate"
+            elif not gate_ok:
+                veto_reason = f"hard_gate_rejected_{pos_dir}:{','.join(gate_reasons)}"
+
+        if veto_reason:
+            execution_report["veto_reason"] = veto_reason
+            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                "symbol": cand.symbol,
+                "ai_decision": ai_res.decision,
+                "target_direction": pos_dir,
+                "veto_reason": veto_reason
+            }, session_id=session_id)
 
         placed = False
-        if (is_short_intent or is_long_intent) and direction_allowed and sizing.is_valid:
-            target_pos_side = "LONG" if is_long_intent else "SHORT"
-            target_order_side = "BUY" if is_long_intent else "SELL"
-            prefix = "bx_long" if is_long_intent else "bx_short"
+        can_execute = (
+            (is_short_intent or is_long_intent) and
+            direction_valid and
+            session_allowed and
+            candidate_allowed and
+            gate_ok and
+            not veto_reason and
+            sizing.is_valid
+        )
+
+        if can_execute:
+            target_pos_side = pos_dir
+            target_order_side = "BUY" if target_pos_side == "LONG" else "SELL"
+            prefix = "bx_long" if target_pos_side == "LONG" else "bx_short"
             client_order_id = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
             if effective_dry_run:
@@ -282,22 +376,35 @@ class SessionOrchestrator:
                         "error": str(e),
                         "client_order_id": client_order_id
                     }, session_id=session_id)
-        elif ai_res.decision == "WAIT" and ai_res.confidence >= 65:
-            added, status_msg = self.watchlist.add_candidate(
-                symbol=cand.symbol,
-                current_price=cand.last_price,
-                conviction_score=ai_res.confidence,
-                playbook=str(playbook_match.playbook) if playbook_match else None,
-                atr=atr_val or 0.0,
-                direction=pos_dir,
-                margin_per_pos=margin_per_pos,
-                leverage=effective_target_lev,
-                stop_loss_price=sizing.stop_loss_price,
-                take_profit_price=sizing.take_profit_price,
-                client=self.client,
-                session_id=session_id
-            )
-            execution_report["watchlist_status"] = status_msg
+        elif is_wait_intent and ai_res.confidence >= 65:
+            if not direction_valid or not session_allowed or not candidate_allowed or not gate_ok:
+                reasons_str = f"invalid_direction:{pos_dir}" if not direction_valid else (
+                    f"barred_in_session:{session_dir}" if not session_allowed else (
+                        f"barred_for_candidate" if not candidate_allowed else f"hard_gate:{','.join(gate_reasons)}"
+                    )
+                )
+                execution_report["watchlist_status"] = f"VETOED_WATCHLIST: {reasons_str}"
+                AuditLogger.log_event("WATCHLIST_VETO", {
+                    "symbol": cand.symbol,
+                    "target_direction": pos_dir,
+                    "reason": reasons_str
+                }, session_id=session_id)
+            else:
+                added, status_msg = self.watchlist.add_candidate(
+                    symbol=cand.symbol,
+                    current_price=cand.last_price,
+                    conviction_score=ai_res.confidence,
+                    playbook=str(playbook_match.playbook) if playbook_match else None,
+                    atr=atr_val or 0.0,
+                    direction=pos_dir,
+                    margin_per_pos=margin_per_pos,
+                    leverage=effective_target_lev,
+                    stop_loss_price=sizing.stop_loss_price,
+                    take_profit_price=sizing.take_profit_price,
+                    client=self.client,
+                    session_id=session_id
+                )
+                execution_report["watchlist_status"] = status_msg
 
         return execution_report, tokens_used, placed
 
@@ -515,6 +622,7 @@ class SessionOrchestrator:
             }
 
         # Collect screened candidates that pass hard gate
+        session_allowed_dirs = ["SHORT", "LONG"] if current_dir == "BOTH" else ([current_dir] if current_dir in ("SHORT", "LONG") else ["SHORT"])
         screened_candidates = []
         for cand in candidates:
             if self.current_session.filled_count >= self.current_session.quota:
@@ -529,19 +637,30 @@ class SessionOrchestrator:
 
             try:
                 market_features = build_candidate_features(self.client, cand.symbol)
-                allowed, gate_reasons = hard_gate(market_features, self.config.max_spread_pct)
             except Exception as exc:
                 market_features = {"fresh": False}
-                allowed, gate_reasons = False, [f"feature_error:{type(exc).__name__}"]
 
-            if not allowed:
+            # Evaluate hard gate separately for each session-allowed direction
+            cand_allowed_dirs = []
+            all_gate_reasons = []
+            for d in session_allowed_dirs:
+                try:
+                    d_ok, d_reasons = _evaluate_hard_gate(market_features, self.config.max_spread_pct, direction=d)
+                except Exception as exc:
+                    d_ok, d_reasons = False, [f"feature_error:{type(exc).__name__}"]
+                if d_ok:
+                    cand_allowed_dirs.append(d)
+                else:
+                    all_gate_reasons.extend(d_reasons)
+
+            if not cand_allowed_dirs:
                 cycle_results.append({
                     "symbol": cand.symbol,
                     "price": cand.last_price,
                     "ai_decision": "SKIP",
                     "ai_confidence": 0,
                     "ai_evidence": "Deterministic hard gate rejected candidate",
-                    "risk_factors": ",".join(gate_reasons),
+                    "risk_factors": ",".join(all_gate_reasons),
                     "market_features": market_features,
                     "playbook": None,
                     "executed": False,
@@ -549,7 +668,7 @@ class SessionOrchestrator:
                 })
                 AuditLogger.log_event("HARD_GATE_REJECT", {
                     "symbol": cand.symbol,
-                    "reasons": gate_reasons,
+                    "reasons": all_gate_reasons,
                 }, session_id=self.current_session.session_id)
                 continue
 
@@ -592,6 +711,7 @@ class SessionOrchestrator:
                 "volume_sma_ratio": round(vol_ratio, 2),
                 "fib_zone": str(fib_zone),
                 "playbook_matched": str(playbook_match.playbook) if playbook_match else "NONE",
+                "allowed_directions": cand_allowed_dirs,
             }
 
             screened_candidates.append({
@@ -600,7 +720,8 @@ class SessionOrchestrator:
                 "market_features": market_features,
                 "playbook_match": playbook_match,
                 "atr_val": atr_val,
-                "summary": summary
+                "summary": summary,
+                "allowed_directions": cand_allowed_dirs,
             })
 
         if not screened_candidates:
@@ -640,10 +761,60 @@ class SessionOrchestrator:
                         continue
                     handled_symbols.add(t_cand.symbol)
                     cand_item = sc["cand"]
+                    sugg_dir = getattr(t_cand, "suggested_direction", "UNKNOWN")
+                    cand_allowed = sc.get("allowed_directions", [])
+
+                    if current_dir in ("LONG", "SHORT"):
+                        pos_dir = current_dir
+                    elif sugg_dir in ("LONG", "SHORT"):
+                        pos_dir = sugg_dir
+                    elif len(cand_allowed) == 1:
+                        pos_dir = cand_allowed[0]
+                    else:
+                        pos_dir = "UNKNOWN"
+
+                    direction_valid = pos_dir in ("LONG", "SHORT")
+                    session_allowed = (
+                        (current_dir == "BOTH" and direction_valid) or
+                        (current_dir == "SHORT" and pos_dir == "SHORT") or
+                        (current_dir == "LONG" and pos_dir == "LONG")
+                    )
+                    cand_allowed_ok = (not cand_allowed) or (pos_dir in cand_allowed)
+                    gate_ok = False
+                    gate_reasons = []
+                    if direction_valid:
+                        gate_ok, gate_reasons = _evaluate_hard_gate(sc["market_features"], self.config.max_spread_pct, direction=pos_dir)
+
+                    if not (direction_valid and session_allowed and cand_allowed_ok and gate_ok):
+                        veto_msg = (
+                            f"invalid_direction:{pos_dir}" if not direction_valid else (
+                                f"direction_{pos_dir}_barred_in_session" if not session_allowed else (
+                                    f"direction_{pos_dir}_barred_for_candidate" if not cand_allowed_ok else (
+                                        f"hard_gate_rejected_{pos_dir}:{','.join(gate_reasons)}"
+                                    )
+                                )
+                            )
+                        )
+                        cycle_results.append({
+                            "symbol": cand_item.symbol,
+                            "price": cand_item.last_price,
+                            "ai_decision": "SKIP",
+                            "ai_confidence": t_cand.conviction_score,
+                            "ai_evidence": f"[TIER 1 WATCH VETOED: {veto_msg}] {t_cand.triage_reason}",
+                            "playbook": sc["playbook_match"].model_dump() if sc["playbook_match"] else None,
+                            "executed": False,
+                            "order_id": None
+                        })
+                        AuditLogger.log_event("WATCH_CANDIDATE_VETO", {
+                            "symbol": cand_item.symbol,
+                            "pos_dir": pos_dir,
+                            "reason": veto_msg
+                        }, session_id=self.current_session.session_id)
+                        continue
+
                     if t_cand.conviction_score >= 70:
                         atr_v = sc["atr_val"]
                         target_rr = sc["playbook_match"].recommended_rr if sc["playbook_match"] and sc["playbook_match"].recommended_rr else 2.0
-                        pos_dir = "LONG" if current_dir == "LONG" else "SHORT"
 
                         # Smart Adaptive Leverage for WATCH candidate (ATR-capped to avoid liquidation guard reject)
                         effective_target_lev = self.current_session.leverage
@@ -720,6 +891,9 @@ class SessionOrchestrator:
                 if not sc:
                     continue
                 handled_symbols.add(f_sym)
+                t_cand = triage_map.get(f_sym)
+                if t_cand and getattr(t_cand, "suggested_direction", "UNKNOWN") in ("LONG", "SHORT"):
+                    sc["suggested_direction"] = t_cand.suggested_direction
                 deep_count += 1
                 rep, tok, placed = self._evaluate_and_execute_candidate(
                     sc=sc,
@@ -763,6 +937,14 @@ class SessionOrchestrator:
                     self.current_session.status = "EXHAUSTED"
                     break
                 deep_count += 1
+                cand_allowed = sc.get("allowed_directions", [])
+                if current_dir in ("LONG", "SHORT"):
+                    sc["suggested_direction"] = current_dir
+                elif len(cand_allowed) == 1:
+                    sc["suggested_direction"] = cand_allowed[0]
+                else:
+                    sc["suggested_direction"] = "UNKNOWN"
+
                 rep, tok, placed = self._evaluate_and_execute_candidate(
                     sc=sc,
                     deep_mode=False,

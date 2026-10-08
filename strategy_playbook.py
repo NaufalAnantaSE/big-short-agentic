@@ -5,7 +5,8 @@ Autonomously classifies and scores market setups into high-probability strategy 
 2. SUPPORT_PULLBACK (Long): Healthy retracement to Fibonacci 0.382-0.618, uptrend alignment (EMA), oversold/rebound RSI.
 3. BREAKDOWN_RETEST (Short): Support breakdown, weak pullback retest under EMA/Fib, rejection upper wick.
 4. FUNDING_SQUEEZE (Short): Abnormal positive funding rate crowd, retail longs paying extreme fees.
-5. NONE: No clear edge or high-risk consolidation.
+5. OVERSOLD_REVERSAL (Long): Strict conjunction of oversold RSI/Bollinger + Bullish Divergence + Bullish confirmation/support reclaim.
+6. NONE: No clear edge or high-risk consolidation.
 """
 
 from typing import Dict, Any, List, Optional
@@ -199,6 +200,62 @@ def evaluate_playbooks(
             recommended_rr=2.0,
             matched_signals=fs_signals
         ))
+
+    # -------------------------------------------------------------
+    # 5. OVERSOLD_REVERSAL (LONG)
+    # -------------------------------------------------------------
+    # Strict conjunction requirement:
+    # 1. Oversold condition
+    # 2. Bullish divergence
+    # 3. Actual bullish confirmation / support reclaim from available candle features
+    is_os = bool(rsi.get("is_oversold") or rsi_15m <= 32.0 or (bb.get("is_overextended_lower") and rsi_15m <= 38.0))
+    has_bull_div = (rsi.get("divergence") == "BULLISH_DIV")
+
+    lower_wick_15m = float(imp.get("lower_wick_15m", 0.0) or 0.0)
+    lower_wick_1h = float(imp.get("lower_wick_1h", 0.0) or 0.0)
+    has_wick_rejection = (lower_wick_15m >= 0.25 or lower_wick_1h >= 0.20 or bool(imp.get("confluent_lower_rejection")))
+
+    timeframes = mf.get("timeframes") or {}
+    last_direction_15m = timeframes.get("15m", {}).get("last_direction")
+    consec_bull = float(imp.get("consecutive_bull_bars", 0) or 0)
+    has_bull_candle = (last_direction_15m == "UP" or consec_bull >= 1)
+
+    swing_low = float(fib.get("swing_low", 0.0) or 0.0)
+    percent_b = float(bb.get("percent_b", 0.5) or 0.5)
+    has_support_reclaim = (swing_low > 0 and price >= swing_low) or (percent_b >= 0.05)
+
+    has_confirmation = has_wick_rejection or has_bull_candle or has_support_reclaim
+
+    # Strict conjunction: MUST have oversold + bullish divergence + confirmation
+    if is_os and has_bull_div and has_confirmation:
+        os_score = 50  # Base score for meeting the strict conjunction
+        os_signals = [
+            f"Kondisi jenuh jual (RSI: {rsi_15m:.1f})",
+            "Bullish Divergence terkonfirmasi (RSI vs Harga)",
+        ]
+
+        if has_wick_rejection:
+            os_score += 20
+            os_signals.append(f"Penolakan harga bawah (Lower wick: {lower_wick_15m:.1%})")
+
+        if has_bull_candle:
+            os_score += 15
+            os_signals.append("Konfirmasi candle pembalikan arah naik (Bullish Reversal)")
+
+        if has_support_reclaim:
+            os_score += 15
+            os_signals.append("Reclaim batas support / pantulan Bollinger Bands")
+
+        if os_score >= 50:
+            candidates.append(PlaybookMatch(
+                playbook=PlaybookType.OVERSOLD_REVERSAL.value,
+                direction=DirectionMode.LONG.value,
+                score=min(100, os_score),
+                title_id="Strategi Pembalikan Jenuh Jual (Oversold Reversal)",
+                explanation_id="Koin mengalami tekanan jual ekstrem namun menunjukkan divergensi bullish dan konfirmasi pantulan support. Bot bersiap membuka posisi beli pembalikan arah.",
+                recommended_rr=2.5,
+                matched_signals=os_signals
+            ))
 
     # -------------------------------------------------------------
     # Select Best Match

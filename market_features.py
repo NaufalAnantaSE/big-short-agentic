@@ -193,6 +193,7 @@ def _impulse_wave_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[D
         lower_wick_1h = (min(last_1h["open"], last_1h["close"]) - last_1h["low"]) / range_1h
 
     confluent_rejection = (wick_15m >= 0.40) or (wick_15m >= 0.25 and wick_1h >= 0.25)
+    confluent_lower_rejection = (lower_wick_15m >= 0.35) or (lower_wick_15m >= 0.25 and lower_wick_1h >= 0.20)
 
     score = 0
     if bull_count >= 3:
@@ -211,6 +212,7 @@ def _impulse_wave_analysis(closed_15m: List[Dict[str, float]], closed_1h: List[D
         "consecutive_bull_bars": bull_count,
         "volume_fade": volume_fade,
         "confluent_rejection": (wick_15m >= 0.25 and wick_1h >= 0.20),
+        "confluent_lower_rejection": confluent_lower_rejection,
         "wick_15m": round(wick_15m, 3),
         "wick_1h": round(wick_1h, 3),
         "lower_wick_15m": round(lower_wick_15m, 3),
@@ -477,27 +479,57 @@ def compute_market_features(
     }
 
 
-def hard_gate(features: Dict[str, Any], max_spread_pct: float = 0.35) -> Tuple[bool, List[str]]:
-    reasons: List[str] = []
+def hard_gate(
+    features: Dict[str, Any],
+    max_spread_pct: float = 0.35,
+    direction: str = "SHORT"
+) -> Tuple[bool, List[str]]:
+    universal_reasons: List[str] = []
     if features.get("fresh") is not True:
-        reasons.append("stale_data")
+        universal_reasons.append("stale_data")
     for key in ("spread_pct", "funding_rate", "atr_to_friction"):
         if _finite(features.get(key)) is None:
-            reasons.append("non_finite")
-    spread, funding, ratio = _finite(features.get("spread_pct")), _finite(features.get("funding_rate")), _finite(features.get("atr_to_friction"))
+            universal_reasons.append("non_finite")
+    spread, funding, ratio = (
+        _finite(features.get("spread_pct")),
+        _finite(features.get("funding_rate")),
+        _finite(features.get("atr_to_friction")),
+    )
     if spread is not None and spread > max_spread_pct:
-        reasons.append("spread_too_wide")
-    if funding is not None and funding <= -0.005:
-        reasons.append("crowded_short_squeeze_risk")
+        universal_reasons.append("spread_too_wide")
     if ratio is not None and ratio < 3.0:
-        reasons.append("atr_below_friction_threshold")
+        universal_reasons.append("atr_below_friction_threshold")
 
-    # Reject if price has already dumped past 68% of the swing (avoid shorting the bottom)
+    # Direction-specific veto checks
+    short_reasons: List[str] = []
+    if funding is not None and funding <= -0.005:
+        short_reasons.append("crowded_short_squeeze_risk")
+
     fib = features.get("fibonacci")
-    if isinstance(fib, dict) and fib.get("valid") and fib.get("is_dump_extended"):
-        reasons.append("dump_already_extended")
+    if isinstance(fib, dict) and fib.get("valid"):
+        if fib.get("is_dump_extended"):
+            short_reasons.append("dump_already_extended")
 
-    return not reasons, reasons
+    long_reasons: List[str] = []
+    if isinstance(fib, dict) and fib.get("valid"):
+        if fib.get("is_long_fomo_danger"):
+            long_reasons.append("long_fomo_danger")
+
+    dir_mode = (direction or "SHORT").upper()
+    if dir_mode == "LONG":
+        all_reasons = universal_reasons + long_reasons
+        return not all_reasons, all_reasons
+    elif dir_mode == "BOTH":
+        all_reasons = list(universal_reasons)
+        short_eligible = not short_reasons
+        long_eligible = not long_reasons
+        if not (short_eligible or long_eligible):
+            all_reasons.extend(short_reasons)
+            all_reasons.extend(long_reasons)
+        return not all_reasons, all_reasons
+    else:  # SHORT
+        all_reasons = universal_reasons + short_reasons
+        return not all_reasons, all_reasons
 
 
 def build_candidate_features(client: Any, symbol: str, now_ms: int | None = None) -> Dict[str, Any]:

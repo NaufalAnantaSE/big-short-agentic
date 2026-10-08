@@ -108,16 +108,18 @@ def build_snapshot_prompt(candidates: list[Dict[str, Any]]) -> str:
 
 def build_batch_triage_prompt(candidate_summaries: list[Dict[str, Any]], direction: str = "SHORT") -> str:
     direction_upper = direction.upper()
+    strategy_target = f"{direction_upper} setups" if direction_upper != "BOTH" else "BOTH (evaluating both LONG and SHORT setups)"
     return (
         f"You are an institutional crypto quantitative analyst performing rapid comparative triage across multiple screened candidates.\n"
-        f"Strategy Target: {direction_upper} setups among recently pumped or volatile tokens.\n\n"
+        f"Strategy Target: {strategy_target} among recently pumped or volatile tokens.\n\n"
         f"Available Actions per candidate:\n"
-        f"- DEEP_ANALYZE: Strongest immediate setups showing top exhaustion, buyer dry-up, or clean breakdown. (Cap: select at most 2 finalists).\n"
-        f"- WATCH: High-quality setup that is currently premature (e.g. still ascending into resistance, needs further reversal/wick confirmation before entry).\n"
+        f"- DEEP_ANALYZE: Strongest immediate setups showing top exhaustion, buyer dry-up, or clean breakdown/bounce. (Cap: select at most 2 finalists).\n"
+        f"- WATCH: High-quality setup that is currently premature (e.g. still ascending into resistance or basing into support, needs further reversal/wick confirmation before entry).\n"
         f"- SKIP: Weak setup, high squeeze danger, low volume, or poor risk:reward.\n\n"
         f"Screened Candidates:\n{json.dumps(candidate_summaries, separators=(',', ':'))}\n\n"
         f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
         f'{{"ranked_candidates": [{{"symbol": "<symbol>", "rank": 1, "action": "DEEP_ANALYZE" | "WATCH" | "SKIP", '
+        f'"suggested_direction": "LONG" | "SHORT" | "UNKNOWN", '
         f'"conviction_score": <int 0-100>, "triage_reason": "<short comparative reason>"}}], '
         f'"selected_finalists": ["<symbol>"]}}'
     )
@@ -169,10 +171,17 @@ def normalize_batch_triage_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
                 score_val = 50
         score_val = max(0, min(100, score_val))
 
+        raw_sugg = str(item.get("suggested_direction", item.get("direction", "UNKNOWN"))).strip().upper()
+        if raw_sugg in ("LONG", "SHORT"):
+            suggested_dir = raw_sugg
+        else:
+            suggested_dir = "UNKNOWN"
+
         normalized_candidates.append({
             "symbol": sym,
             "rank": int(item.get("rank", idx + 1)),
             "action": act,
+            "suggested_direction": suggested_dir,
             "conviction_score": score_val,
             "triage_reason": str(item.get("triage_reason", item.get("reason", ""))).strip(),
         })
@@ -205,15 +214,28 @@ def normalize_batch_triage_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
 def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SHORT") -> str:
     symbol = candidate.get("symbol", "UNKNOWN")
     dir_target = direction.upper()
+    if dir_target == "BOTH":
+        target_str = "evaluating both LONG and SHORT"
+        synthesis_auth = (
+            "Authorize ENTER_LONG for valid long setups OR ENTER_SHORT for valid short setups "
+            "ONLY if evidence shows clear exhaustion / structural edge with confidence >= 70."
+        )
+    elif dir_target == "LONG":
+        target_str = "LONG"
+        synthesis_auth = "Authorize ENTER_LONG ONLY if evidence shows clear exhaustion / structural edge with confidence >= 70."
+    else:
+        target_str = "SHORT"
+        synthesis_auth = "Authorize ENTER_SHORT ONLY if evidence shows clear exhaustion / structural edge with confidence >= 70."
+
     return (
-        f"You are the Lead Quantitative Risk Arbiter for an automated perpetual futures strategy targeting {dir_target} setups.\n"
+        f"You are the Lead Quantitative Risk Arbiter for an automated perpetual futures strategy targeting {target_str} setups.\n"
         f"Perform a dual-thesis dialectical evaluation for this screened finalist before entry authorization.\n\n"
         f"Candidate Detailed Setup:\n{json.dumps(candidate, separators=(',', ':'))}\n\n"
         f"Evaluation Directives:\n"
         f"1. Bull Thesis (Squeeze Defender): Identify buyer momentum, breakout risks, negative funding squeeze traps, or lack of clear rejection.\n"
         f"2. Bear Thesis (Short Hunter): Identify buyer dry-up, upper wick rejections, volume divergence, or resistance breaks.\n"
         f"3. Synthesis Decision:\n"
-        f"   - Authorize ENTER_{dir_target} ONLY if evidence shows clear exhaustion / structural edge with confidence >= 70.\n"
+        f"   - {synthesis_auth}\n"
         f"   - If setup is promising but needs further price action, return WAIT.\n"
         f"   - If continuation or squeeze risk dominates, return SKIP.\n\n"
         f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
@@ -230,6 +252,7 @@ class TriageCandidate(BaseModel):
     symbol: str
     rank: int = 1
     action: str = Field(default="SKIP", description="DEEP_ANALYZE, WATCH, or SKIP")
+    suggested_direction: str = Field(default="UNKNOWN", description="LONG, SHORT, or UNKNOWN")
     conviction_score: int = Field(default=0, ge=0, le=100)
     triage_reason: str = ""
 
@@ -404,14 +427,20 @@ class AIEvaluator:
         current_price: float,
         klines_summary: list,
         spread_pct: float,
-        market_features: Optional[Dict[str, Any]] = None
+        market_features: Optional[Dict[str, Any]] = None,
+        direction: str = "SHORT"
     ) -> AIEvaluationResult:
         """
         Sends structured market setup to 9Router.
         Fails closed (returns SKIP/WAIT) on timeout, network error, or invalid JSON.
         """
+        dir_norm = direction.upper() if direction else "SHORT"
+        strategy_desc = (
+            "Short-Only and Long Perpetual setups" if dir_norm == "BOTH"
+            else ("Long Perpetual setups" if dir_norm == "LONG" else "Short-Only Perpetual setups")
+        )
         prompt = (
-            f"You are a quantitative crypto trading analyst specializing in Short-Only and Long Perpetual setups.\n"
+            f"You are a quantitative crypto trading analyst specializing in {strategy_desc}.\n"
             f"Evaluate whether the following asset exhibits valid trade opportunities such as 'PUMP_EXHAUSTION' (buyer exhaustion, upper rejection wick, drop in buying volume after pump), "
             f"'BREAKDOWN_RETEST' suitable for a SHORT entry, or healthy pullback bounce suitable for a LONG entry.\n\n"
             f"Asset Data:\n"
@@ -429,10 +458,11 @@ class AIEvaluator:
             f"- Impulse Wave & Volume: Check if impulse_wave shows volume fade or confluent upper wick rejections across 15m/1h.\n"
             f"- Funding Sentiment: EXTREME_LONG_CROWD confirms retail longs are overleveraged, providing strong downward dump fuel.\n"
             f"- If price shows signs of seller emergence, buyer dry-up, or local exhaustion, recommend ENTER_SHORT with realistic confidence (60-95).\n"
+            f"- If price shows signs of buyer emergence, seller exhaustion, or oversold bounce / support hold, recommend ENTER_LONG with realistic confidence (60-95).\n"
             f"- If momentum is still strongly upward without rejection, recommend WAIT.\n"
             f"- If market is too illiquid or high risk, recommend SKIP.\n\n"
             f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
-            f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
+            f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "ENTER_LONG" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
             f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<short reason>", "risk_factors": "<risks>"}}'
         )
 

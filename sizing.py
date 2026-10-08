@@ -139,10 +139,12 @@ class SizingCalculator:
             )
 
         # Exchange contract rules
+        dir_norm = direction.upper()
         qty_precision = int(contract_info.get("quantityPrecision", 0))
         trade_min_qty = Decimal(str(contract_info.get("tradeMinQuantity", "0.0001")))
         trade_min_usdt = Decimal(str(contract_info.get("tradeMinUSDT", "5.0")))
-        pair_max_leverage = int(contract_info.get("maxShortLeverage", max_allowed_leverage))
+        lev_key = "maxLongLeverage" if dir_norm == "LONG" else "maxShortLeverage"
+        pair_max_leverage = int(contract_info.get(lev_key, max_allowed_leverage))
 
         effective_leverage = min(target_leverage, pair_max_leverage, max_allowed_leverage)
         if effective_leverage < 1:

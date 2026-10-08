@@ -465,6 +465,8 @@ class TenantSessionManager:
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
             if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
+                u_mode = latest.get("mode", "PUMP_GAINERS")
+                orch.config.universe_mode = u_mode
                 orch.current_session = SessionState(
                     session_id=latest["session_id"],
                     status=latest["status"],
@@ -475,6 +477,7 @@ class TenantSessionManager:
                     execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
                     direction_mode=latest.get("direction_mode", "SHORT"),
                     exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
+                    universe_mode=u_mode,
                     filled_count=latest["filled_count"],
                     started_at=latest["started_at"]
                 )
@@ -586,6 +589,8 @@ class TenantSessionManager:
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
             if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
+                u_mode = latest.get("mode", "PUMP_GAINERS")
+                orch.config.universe_mode = u_mode
                 # Restore session into orchestrator
                 orch.current_session = SessionState(
                     session_id=latest["session_id"],
@@ -597,6 +602,7 @@ class TenantSessionManager:
                     execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
                     direction_mode=latest.get("direction_mode", "SHORT"),
                     exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
+                    universe_mode=u_mode,
                     filled_count=latest["filled_count"],
                     started_at=latest["started_at"]
                 )
@@ -638,6 +644,13 @@ class TenantSessionManager:
             ema_data = mf.get("ema_trend")
             playbook_data = ev.get("playbook")
 
+            cand_dir = (
+                ev.get("direction")
+                or ev.get("suggested_direction")
+                or (playbook_data.get("direction") if isinstance(playbook_data, dict) else None)
+                or (orch.current_session.direction_mode if orch.current_session and orch.current_session.direction_mode in ("LONG", "SHORT") else "SHORT")
+            )
+
             h = humanize_ai_decision(
                 symbol=ev.get("symbol", ""),
                 decision=ev.get("ai_decision", "SKIP"),
@@ -668,7 +681,8 @@ class TenantSessionManager:
                 bollinger=bb_data,
                 ema_trend=ema_data,
                 playbook=playbook_data,
-                sizing_rejection=sizing.get("rejection_reason")
+                sizing_rejection=sizing.get("rejection_reason"),
+                direction=cand_dir
             )
             # Add execution information
             h["executed"] = executed

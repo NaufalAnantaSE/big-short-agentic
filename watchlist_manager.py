@@ -19,6 +19,7 @@ class WatchlistEntry(BaseModel):
     ttl_seconds: float = 1800.0  # 30 minutes TTL
     initial_price: float
     swing_high: float
+    swing_low: float = 0.0
     conviction_score: float  # AI confidence (0-100) or Playbook score
     playbook: Optional[str] = None
     atr: float = 0.0
@@ -87,6 +88,7 @@ class WatchlistManager:
             existing = self.entries[symbol]
             existing.conviction_score = max(existing.conviction_score, conviction_score)
             existing.swing_high = max(existing.swing_high, current_price)
+            existing.swing_low = min(existing.swing_low, current_price) if existing.swing_low > 0 else current_price
             existing.last_checked_at = now
             if atr > 0:
                 existing.atr = atr
@@ -116,6 +118,7 @@ class WatchlistManager:
             ttl_seconds=self.default_ttl_seconds,
             initial_price=current_price,
             swing_high=current_price,
+            swing_low=current_price,
             conviction_score=conviction_score,
             playbook=playbook,
             atr=atr,
@@ -265,6 +268,116 @@ class WatchlistManager:
         # Update swing high with candle high
         entry.swing_high = max(entry.swing_high, high_p)
 
+        is_long = (entry.direction.upper() == "LONG")
+
+        if is_long:
+            # ----------------------------------------------------
+            # LONG DIRECTION REVERSAL & EVICTION LOGIC
+            # ----------------------------------------------------
+            # Update swing low with candle low
+            if entry.swing_low <= 0:
+                entry.swing_low = current_price
+            entry.swing_low = min(entry.swing_low, low_p, current_price)
+
+            # 4L. Breakdown Invalidation: Close candle 15m < initial_price * 0.98
+            # (Closing beyond setup level by >2.0% confirms breakdown continuation, not bounce)
+            if close_p < entry.initial_price * 0.98:
+                return True, "BREAKDOWN_INVALIDATION", ReversalTriggerResult(triggered=False, evidence="Closed >2% below breakdown invalidation level")
+
+            # Metrics for LONG
+            window = klines_15m[-24:] if len(klines_15m) >= 24 else klines_15m
+            highs = [float(c.get("high", 0)) for c in window]
+            lows = [float(c.get("low", 0)) for c in window]
+            win_high = max(highs) if highs else high_p
+            win_low = min(lows) if lows else low_p
+            swing_span = max(win_high - win_low, 1e-12)
+
+            # Distance from local low
+            distance_from_low = (close_p - win_low) / swing_span
+
+            candles_to_check = []
+            if len(klines_15m) >= 4:
+                candles_to_check.append((klines_15m[-2], "closed [-2]"))
+            candles_to_check.append((latest_c, "latest [-1]"))
+
+            # ----------------------------------------------------
+            # PATTERN 1 (LONG): Lower Wick Rejection (Hammer / Bullish Bounce)
+            # ----------------------------------------------------
+            for cand_ref, cand_label in candles_to_check:
+                c_open = float(cand_ref.get("open", 0))
+                c_high = float(cand_ref.get("high", 0))
+                c_low = float(cand_ref.get("low", 0))
+                c_close = float(cand_ref.get("close", 0))
+                c_lower_wick = min(c_open, c_close) - c_low
+                c_body = abs(c_close - c_open)
+                c_range = c_high - c_low
+                c_atr = entry.atr if entry.atr > 0 else c_range
+
+                p1_wick_ratio = c_lower_wick >= 1.8 * c_body
+                p1_wick_range = (c_lower_wick / c_range) >= 0.40 if c_range > 0 else False
+                p1_abs_wick = (c_lower_wick >= 0.003 * c_low) or (c_lower_wick >= 0.5 * c_atr)
+                p1_bounce = (c_close > c_open) or (current_price >= c_low * (1.0 + 0.004)) or (c_close >= c_low * (1.0 + 0.004))
+                p1_fib_safe = distance_from_low <= 0.382
+
+                if p1_wick_ratio and p1_wick_range and p1_abs_wick and p1_bounce and p1_fib_safe:
+                    return False, None, ReversalTriggerResult(
+                        triggered=True,
+                        pattern="LOWER_WICK_REJECTION",
+                        trigger_price=current_price,
+                        evidence=(
+                            f"15m Lower Wick Rejection confirmed on {cand_label}: lower_wick={c_lower_wick:.6f} ({c_lower_wick/c_range*100:.1f}% range), "
+                            f">=1.8x body ({c_body:.6f}), bounce confirmed, distance from low={distance_from_low:.3f} <= 0.382."
+                        ),
+                        reasons=["lower_wick_ratio_met", "lower_wick_range_met", "abs_wick_met", "bounce_confirmed_met", "fib_safe"]
+                    )
+
+            # ----------------------------------------------------
+            # PATTERN 2 (LONG): Local Break of Structure to Upside (Micro Breakout 15m)
+            # ----------------------------------------------------
+            prev_1 = klines_15m[-2]
+            prev_2 = klines_15m[-3]
+            try:
+                max_prev_high = max(float(prev_1.get("high", 0)), float(prev_2.get("high", 0)))
+            except (ValueError, TypeError):
+                max_prev_high = high_p
+
+            recent_vols = []
+            for c in klines_15m[-10:]:
+                try:
+                    recent_vols.append(float(c.get("volume", c.get("quoteVolume", 0))))
+                except Exception:
+                    pass
+            sma_vol = (sum(recent_vols) / len(recent_vols)) if recent_vols else vol
+
+            p2_structure_break = (close_p > max_prev_high) or (current_price > max_prev_high)
+            p2_volume_confirm = vol >= 1.3 * sma_vol if sma_vol > 0 else True
+            p2_fib_safe = distance_from_low <= 0.382
+
+            if p2_structure_break and p2_volume_confirm and p2_fib_safe:
+                return False, None, ReversalTriggerResult(
+                    triggered=True,
+                    pattern="MICRO_BREAKOUT",
+                    trigger_price=current_price,
+                    evidence=(
+                        f"15m Micro Breakout confirmed: close={close_p} > max_prev_high={max_prev_high}, "
+                        f"volume={vol:.1f} >= 1.3x SMA10 ({sma_vol:.1f}), distance from low={distance_from_low:.3f} <= 0.382."
+                    ),
+                    reasons=["structure_break_met", "volume_confirm_met", "fib_safe"]
+                )
+
+            # Extended Pump Missed Gate (>5.0% above swing low without entry being caught)
+            if entry.swing_low > 0 and current_price > entry.swing_low * 1.05:
+                return True, "PUMP_MISSED", ReversalTriggerResult(triggered=False, evidence="Missed pump >5% above swing low")
+
+            # Neither pattern triggered, keep watching
+            return False, None, ReversalTriggerResult(
+                triggered=False,
+                evidence="Reversal confirmation criteria not yet satisfied."
+            )
+
+        # ----------------------------------------------------
+        # SHORT DIRECTION REVERSAL & EVICTION LOGIC
+        # ----------------------------------------------------
         # 4. Breakout Invalidation: Close candle 15m > initial_price * 1.02
         # (Closing beyond resistance/setup level by >2.0% confirms runaway continuation, not exhaustion)
         if close_p > entry.initial_price * 1.02:

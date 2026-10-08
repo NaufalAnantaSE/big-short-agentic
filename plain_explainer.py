@@ -34,7 +34,8 @@ def humanize_ai_decision(
     bollinger: Optional[Dict[str, Any]] = None,
     ema_trend: Optional[Dict[str, Any]] = None,
     playbook: Optional[Dict[str, Any]] = None,
-    sizing_rejection: Optional[str] = None
+    sizing_rejection: Optional[str] = None,
+    direction: str = "SHORT"
 ) -> Dict[str, Any]:
     """
     Produces a senior-friendly narrative card with high legibility and clear, empathetic explanations.
@@ -119,7 +120,10 @@ def humanize_ai_decision(
     if change_24h > 10.0:
         market_notes.append(f"Harga melonjak +{change_24h:.1f}% dalam 24 jam terakhir.")
     elif change_24h < -5.0:
-        market_notes.append(f"Harga koin sudah turun tajam ({change_24h:.1f}%), bukan saat ideal membuka posisi jual baru.")
+        if direction.upper() == "LONG":
+            market_notes.append(f"Harga koin terkoreksi ({change_24h:.1f}%), potensi area diskon untuk memantau pantulan.")
+        else:
+            market_notes.append(f"Harga koin sudah turun tajam ({change_24h:.1f}%), bukan saat ideal membuka posisi jual baru.")
     else:
         market_notes.append(f"Pergerakan harga 24 jam cenderung datar ({change_24h:+.1f}%).")
 
@@ -134,14 +138,27 @@ def humanize_ai_decision(
         zone = fibonacci.get("zone")
         ratio = float(fibonacci.get("retracement_ratio", 0.0) or 0.0)
         pct = max(0.0, min(100.0, ratio * 100.0))
+        dir_norm = direction.upper()
         if zone == "PEAK_EXHAUSTION":
-            fib_note = f"Analisa Fibonacci: Berada di puncak kenaikan (koreksi baru {pct:.1f}%), peluang posisi jual paling optimal."
+            if dir_norm == "LONG":
+                fib_note = f"Analisa Fibonacci: Berada di dekat puncak kenaikan ({pct:.1f}% dari puncak), risiko beli di pucuk (FOMO)."
+            else:
+                fib_note = f"Analisa Fibonacci: Berada di puncak kenaikan (koreksi baru {pct:.1f}%), peluang posisi jual paling optimal."
         elif zone == "BLOW_OFF_EXTENSION":
-            fib_note = "Analisa Fibonacci: Lonjakan ekstrem menembus batas atas (Blow-Off Top), jenuh beli sangat tinggi."
+            if dir_norm == "LONG":
+                fib_note = "Analisa Fibonacci: Lonjakan ekstrem menembus batas atas (Blow-Off Top), risiko tinggi jika membeli di sini."
+            else:
+                fib_note = "Analisa Fibonacci: Lonjakan ekstrem menembus batas atas (Blow-Off Top), jenuh beli sangat tinggi."
         elif zone == "SHALLOW_PULLBACK":
-            fib_note = f"Analisa Fibonacci: Penolakan harga awal terkonfirmasi (koreksi {pct:.1f}% dari puncak)."
+            if dir_norm == "LONG":
+                fib_note = f"Analisa Fibonacci: Koreksi awal dari puncak ({pct:.1f}%), bersiap mencari konfirmasi pantulan."
+            else:
+                fib_note = f"Analisa Fibonacci: Penolakan harga awal terkonfirmasi (koreksi {pct:.1f}% dari puncak)."
         elif zone == "EXTENDED_DUMP":
-            fib_note = f"Analisa Fibonacci: Harga sudah anjlok terlalu jauh ({pct:.1f}%), sistem mencegah jual di dasar."
+            if dir_norm == "LONG":
+                fib_note = f"Analisa Fibonacci: Harga terkoreksi dalam ({pct:.1f}% dari rentang), potensi pantulan jenuh jual (Bottom Fishing)."
+            else:
+                fib_note = f"Analisa Fibonacci: Harga sudah anjlok terlalu jauh ({pct:.1f}%), sistem mencegah jual di dasar."
         else:
             fib_note = f"Analisa Fibonacci: Berada di zona tengah gelombang ({pct:.1f}%)."
         market_notes.append(fib_note)
@@ -229,7 +246,16 @@ def humanize_ai_decision(
     risk_lower = (risk_factors or "").lower()
 
     if "dump_already_extended" in risk_lower or "extended_dump" in risk_lower:
-        plain_reason = "Harga koin sudah turun jauh dari puncaknya. Sistem menolak membuka posisi jual agar modal Anda tidak terjebak memantul di dasar harga."
+        if direction.upper() == "LONG":
+            plain_reason = "Harga koin sudah terkoreksi sangat dalam. Sistem memverifikasi konfirmasi pantulan support sebelum mengizinkan posisi beli."
+        else:
+            plain_reason = "Harga koin sudah turun jauh dari puncaknya. Sistem menolak membuka posisi jual agar modal Anda tidak terjebak memantul di dasar harga."
+    elif "pump_already_extended" in risk_lower or "fomo_danger" in risk_lower or "is_long_fomo_danger" in risk_lower:
+        plain_reason = "Harga koin sudah melesat terlalu tinggi mendekati puncak kenaikan. Sistem menolak membuka posisi beli demi mencegah risiko membeli di pucuk (FOMO)."
+    elif "crowded_long_liquidation_risk" in risk_lower:
+        plain_reason = "Posisi beli (Long) di pasar saat ini terlalu padat dengan biaya pendanaan tinggi. Sistem mencegah beli demi menghindari risiko likuidasi serentak."
+    elif "crowded_short_squeeze_risk" in risk_lower:
+        plain_reason = "Posisi jual (Short) di pasar saat ini terlalu padat dengan biaya pendanaan negatif. Sistem mencegah jual demi menghindari risiko lonjakan harga mendadak (Short Squeeze)."
     elif "hard gate" in evidence_lower or "hard_gate" in evidence_lower:
         plain_reason = "Koin ini otomatis disaring oleh sistem keamanan awal karena kriteria dasar pasar (seperti volume transaksi atau stabilitas harga) belum memenuhi syarat ketat."
     elif "exhaustion" in evidence_lower or "buyer dry-up" in evidence_lower or "rejection" in evidence_lower:
