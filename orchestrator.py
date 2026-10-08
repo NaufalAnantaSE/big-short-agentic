@@ -32,7 +32,6 @@ class SessionState(BaseModel):
 
 
 MAX_TRIAGE_CANDIDATES = 12
-MAX_DEEP_CANDIDATES = 1
 MAX_CYCLE_TOKENS = 30000
 
 class SessionOrchestrator:
@@ -78,13 +77,7 @@ class SessionOrchestrator:
             "exit_policy": exit_policy
         }, session_id=session_id)
 
-        # Startup reconciliation: reconcile open and orphan resting orders on exchange
-        if self.config.api_key and self.config.api_key != "mock":
-            try:
-                self.watchlist.reconcile_resting_orders(self.client, session_id=session_id)
-            except Exception:
-                pass
-
+        # Startup reconciliation: Phase 2 feature, removed from hot path
         return self.current_session
 
     def stop_session(self) -> Optional[SessionState]:
@@ -129,10 +122,7 @@ class SessionOrchestrator:
 
         if deep_mode:
             # Tier 2: Single structured dialectical deep evaluation
-            if hasattr(self.ai, "evaluate_adversarial") and hasattr(getattr(self.ai, "evaluate_adversarial", None), "mock_calls") and not hasattr(getattr(self.ai, "evaluate_deep_candidate", None), "mock_calls"):
-                ai_res = self.ai.evaluate_adversarial(candidate_payload)
-            else:
-                ai_res = self.ai.evaluate_deep_candidate(candidate_payload, direction=init_dir)
+            ai_res = self.ai.evaluate_deep_candidate(candidate_payload, direction=init_dir)
         else:
             ai_res = self.ai.evaluate_candidate(
                 symbol=cand.symbol,
@@ -306,7 +296,7 @@ class SessionOrchestrator:
 
         return execution_report, tokens_used, placed
 
-    def run_cycle(self, dry_run: bool = True, limit_candidates: int = 5) -> Dict[str, Any]:
+    def run_cycle(self, dry_run: bool = True, limit_candidates: int = 8) -> Dict[str, Any]:
         """
         Executes one full scan-evaluate-execute cycle:
         1. Checks quota
@@ -318,29 +308,19 @@ class SessionOrchestrator:
         if not self.current_session or self.current_session.status not in ("ACTIVE_SEARCHING", "EXHAUSTED"):
             return {"status": "NO_ACTIVE_SESSION", "message": "No active session in searching state."}
 
-        # Synchronize and reconcile open/resting orders on exchange
-        if not dry_run and self.config.api_key and self.config.api_key != "mock":
-            try:
-                self.watchlist.reconcile_resting_orders(self.client, session_id=self.current_session.session_id)
-            except Exception:
-                pass
-
         try:
             occupied = self.scanner.get_occupied_symbols()
         except Exception:
             occupied = set()
 
         occupied_count = len(occupied)
-        resting_count = self.watchlist.count_resting_orders()
-        slots_used = occupied_count + resting_count
         self.current_session.filled_count = occupied_count
 
-        available_slots = self.current_session.quota - slots_used
+        # Strictly active positions determine available slots
+        available_slots = self.current_session.quota - self.current_session.filled_count
 
-        if available_slots <= 0 and self.current_session.filled_count >= self.current_session.quota:
+        if available_slots <= 0:
             self.current_session.status = "EXHAUSTED"
-            for entry in self.watchlist.get_all_entries():
-                self.watchlist.cancel_entry_resting_order(entry, reason="QUOTA_EXHAUSTED", client=self.client, session_id=self.current_session.session_id)
             return {"status": "QUOTA_EXHAUSTED", "filled": self.current_session.filled_count, "quota": self.current_session.quota}
 
         if self.current_session.filled_count < self.current_session.quota and self.current_session.status == "EXHAUSTED":
@@ -606,24 +586,10 @@ class SessionOrchestrator:
             }
 
         # Step 2: Tier 1 Batch Triage via 9Router
-        # Backward compatibility for existing tests mocking single/adversarial evaluator
-        use_legacy_direct = (
-            (hasattr(getattr(self.ai, "evaluate_candidate", None), "mock_calls") or
-             hasattr(getattr(self.ai, "evaluate_adversarial", None), "mock_calls"))
-            and not hasattr(getattr(self.ai, "evaluate_batch_triage", None), "mock_calls")
+        triage_res = self.ai.evaluate_batch_triage(
+            [sc["summary"] for sc in screened_candidates],
+            direction=current_dir
         )
-
-        if use_legacy_direct:
-            triage_res = BatchTriageResult(
-                ranked_candidates=[TriageCandidate(symbol=sc["cand"].symbol, rank=i+1, action="DEEP_ANALYZE", conviction_score=85) for i, sc in enumerate(screened_candidates)],
-                selected_finalists=[sc["cand"].symbol for sc in screened_candidates[:2]],
-                is_valid=True
-            )
-        else:
-            triage_res = self.ai.evaluate_batch_triage(
-                [sc["summary"] for sc in screened_candidates],
-                direction=current_dir
-            )
 
         AuditLogger.log_event("AI_BATCH_TRIAGE", {
             "candidates_count": len(screened_candidates),
@@ -653,10 +619,19 @@ class SessionOrchestrator:
                         atr_v = sc["atr_val"]
                         target_rr = sc["playbook_match"].recommended_rr if sc["playbook_match"] and sc["playbook_match"].recommended_rr else 2.0
                         pos_dir = "LONG" if current_dir == "LONG" else "SHORT"
+
+                        # Smart Adaptive Leverage for WATCH candidate (ATR-capped to avoid liquidation guard reject)
+                        effective_target_lev = self.current_session.leverage
+                        if atr_v and cand_item.last_price > 0:
+                            est_sl_pct = min(6.0, max(1.5, (1.5 * float(atr_v) / cand_item.last_price) * 100.0))
+                            max_safe_lev = int(75.0 / est_sl_pct)
+                            if effective_target_lev > max_safe_lev:
+                                effective_target_lev = max(1, max_safe_lev)
+
                         sizing = SizingCalculator.calculate_lot(
                             symbol=cand_item.symbol,
                             margin_usdt=self.current_session.margin_per_pos,
-                            target_leverage=self.current_session.leverage,
+                            target_leverage=effective_target_lev,
                             current_price=cand_item.last_price,
                             contract_info=cand_item.contract_info,
                             max_allowed_leverage=20,
@@ -672,7 +647,7 @@ class SessionOrchestrator:
                             atr=atr_v or 0.0,
                             direction=pos_dir,
                             margin_per_pos=self.current_session.margin_per_pos,
-                            leverage=self.current_session.leverage,
+                            leverage=effective_target_lev,
                             stop_loss_price=sizing.stop_loss_price,
                             take_profit_price=sizing.take_profit_price,
                             client=self.client,
@@ -714,6 +689,8 @@ class SessionOrchestrator:
                 if self.current_session.filled_count >= self.current_session.quota:
                     self.current_session.status = "EXHAUSTED"
                     break
+                if f_sym in handled_symbols:
+                    continue
                 sc = candidate_map.get(f_sym)
                 if not sc:
                     continue

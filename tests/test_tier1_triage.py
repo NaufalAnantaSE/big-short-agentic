@@ -71,7 +71,7 @@ def test_triage_auto_add_watch_to_watchlist(mocker):
     ))
 
     # Spy on deep evaluation (should NOT be called!)
-    mock_deep = mocker.patch.object(orch.ai, "evaluate_adversarial")
+    mock_deep = mocker.patch.object(orch.ai, "evaluate_deep_candidate")
     mock_single = mocker.patch.object(orch.ai, "evaluate_candidate")
 
     res = orch.run_cycle(dry_run=True)
@@ -161,7 +161,7 @@ def test_skip_second_finalist_when_quota_exhausted(mocker):
     ))
 
     # Mock deep evaluation: FINALIST-1 returns ENTER_SHORT (uses the 1 available slot)
-    mock_deep = mocker.patch.object(orch.ai, "evaluate_adversarial", side_effect=[
+    mock_deep = mocker.patch.object(orch.ai, "evaluate_deep_candidate", side_effect=[
         AIEvaluationResult(symbol="FINALIST-1", decision="ENTER_SHORT", confidence=90, is_valid=True),
         AIEvaluationResult(symbol="FINALIST-2", decision="ENTER_SHORT", confidence=85, is_valid=True)
     ])

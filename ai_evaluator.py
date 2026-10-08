@@ -96,10 +96,10 @@ def aggregate_usage(usages: list[Dict[str, Any]]) -> Dict[str, int]:
     return {key: sum(int(item.get(key, 0) or 0) for item in usages) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
 
 
-def estimate_batch_budget(candidate_count: int, deep_candidate_count: int = 3) -> Dict[str, int]:
+def estimate_batch_budget(candidate_count: int, deep_candidate_count: int = 2) -> Dict[str, int]:
     triage = max(0, min(candidate_count, 12))
     deep = max(0, min(deep_candidate_count, 3))
-    return {"max_calls": 1 + (deep * 2) + 1, "deep_candidate_count": deep, "estimated_total_tokens": 7000 + triage * 450 + deep * 4800}
+    return {"max_calls": 1 + deep, "deep_candidate_count": deep, "estimated_total_tokens": 500 + triage * 80 + deep * 800}
 
 
 def build_snapshot_prompt(candidates: list[Dict[str, Any]]) -> str:
@@ -223,18 +223,6 @@ def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SH
         f'"bear_thesis": "<short hunter argument>", '
         f'"key_evidence": "<synthesized decisive reason>", '
         f'"risk_factors": "<dominant risks>"}}'
-    )
-
-
-def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
-    symbol = candidate.get("symbol", "UNKNOWN")
-    return (
-        f"You are the {role} in an automated crypto shorting risk engine.\n"
-        f"Evaluate this asset setup for an optimal short entry or whether to wait/skip.\n"
-        f"Candidate Setup: {json.dumps(candidate, separators=(',', ':'))}\n\n"
-        f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
-        f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
-        f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<reason>", "risk_factors": "<risks>"}}'
     )
 
 
@@ -407,50 +395,6 @@ class AIEvaluator:
                 error_message=f"deep_eval_error: {str(exc)}",
                 is_valid=False,
                 latency_ms=0.0,
-            )
-
-    def evaluate_adversarial(self, candidate_payload: Dict[str, Any]) -> AIEvaluationResult:
-        symbol = str(candidate_payload.get("symbol", "UNKNOWN"))
-        roles = [
-            "Short Hunter looking for exhaustion, buyer dry-up, and lower highs",
-            "Squeeze Defender looking for continuation, crowded short traps, and momentum",
-            "Execution Arbiter. Strategy note: in pump exhaustion trading, entries occur at the top during buyer exhaustion / upper wick rejection, NOT after the price has already dumped. If rejection wick and buyer dry-up are visible after a pump or overextension, authorize ENTER_SHORT",
-        ]
-        usages: list[Dict[str, Any]] = []
-        total_latency = 0.0
-        last_parsed: Dict[str, Any] = {"decision": "SKIP", "confidence": 0}
-        try:
-            for role in roles:
-                prompt = build_adversarial_prompt(candidate_payload, role)
-                parsed, usage, dt = self._chat_call(prompt)
-                usages.append(usage)
-                total_latency += dt
-                last_parsed = parsed
-            decision = last_parsed["decision"]
-            confidence = int(last_parsed.get("confidence", 0))
-            if decision in ("ENTER_SHORT", "ENTER_LONG") and confidence < 70:
-                decision = "WAIT"
-            return AIEvaluationResult(
-                symbol=symbol,
-                decision=decision,
-                confidence=confidence,
-                setup_type=str(last_parsed.get("setup_type", "NONE")),
-                key_evidence=str(last_parsed.get("key_evidence", "")),
-                risk_factors=str(last_parsed.get("risk_factors", "")),
-                raw_response=json.dumps(last_parsed),
-                is_valid=True,
-                usage=aggregate_usage(usages),
-                latency_ms=total_latency,
-            )
-        except Exception as exc:
-            return AIEvaluationResult(
-                symbol=symbol,
-                decision="SKIP",
-                confidence=0,
-                error_message=f"adversarial_error: {str(exc)}",
-                is_valid=False,
-                usage=aggregate_usage(usages),
-                latency_ms=total_latency,
             )
 
     def evaluate_candidate(

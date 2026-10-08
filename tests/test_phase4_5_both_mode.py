@@ -6,7 +6,7 @@ from contracts import DirectionMode, ExecutionMode
 from orchestrator import SessionOrchestrator
 from config import AppConfig
 from scanner import CandidatePair
-from ai_evaluator import AIEvaluationResult
+from ai_evaluator import AIEvaluationResult, BatchTriageResult, TriageCandidate
 
 
 def test_both_direction_mode_allows_both_short_and_long_entries(mocker):
@@ -55,8 +55,17 @@ def test_both_direction_mode_allows_both_short_and_long_entries(mocker):
             return AIEvaluationResult(symbol=sym, decision="ENTER_SHORT", confidence=85, is_valid=True)
         return AIEvaluationResult(symbol=sym, decision="ENTER_LONG", confidence=88, is_valid=True)
 
+    from ai_evaluator import BatchTriageResult, TriageCandidate
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[
+            TriageCandidate(symbol="MEME1-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85),
+            TriageCandidate(symbol="MEME2-USDT", rank=2, action="DEEP_ANALYZE", conviction_score=88),
+        ],
+        selected_finalists=["MEME1-USDT", "MEME2-USDT"],
+        is_valid=True
+    ))
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", side_effect=mock_eval)
     mocker.patch.object(orch.ai, "evaluate_candidate", side_effect=mock_eval)
-    mocker.patch.object(orch.ai, "evaluate_adversarial", side_effect=mock_eval)
 
     mock_set_lev = mocker.patch.object(orch.client, "set_leverage")
     mock_place_order = mocker.patch.object(orch.client, "place_order", side_effect=[
@@ -105,10 +114,15 @@ def test_direction_filter_enforces_short_only_rejection_of_long(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand_long])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.2, "funding_rate": 0.0001, "atr_to_friction": 10.0})
-    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="PUMP-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=90)],
+        selected_finalists=["PUMP-USDT"],
+        is_valid=True
+    ))
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", return_value=AIEvaluationResult(
         symbol="PUMP-USDT", decision="ENTER_LONG", confidence=90, is_valid=True
     ))
-    mocker.patch.object(orch.ai, "evaluate_adversarial", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="PUMP-USDT", decision="ENTER_LONG", confidence=90, is_valid=True
     ))
 

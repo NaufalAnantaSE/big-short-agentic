@@ -58,6 +58,7 @@ class WatchlistManager:
         return list(self.entries.values())
 
     def count_resting_orders(self) -> int:
+        """[PHASE 2 FEATURE - PRE-WIRED FOR BREAKDOWN STOP-MARKET EXECUTION] Counts entries with active resting orders."""
         return sum(1 for e in self.entries.values() if e.resting_order_id or e.resting_client_order_id)
 
     def add_candidate(
@@ -181,6 +182,7 @@ class WatchlistManager:
         session_id: Optional[str] = None
     ) -> bool:
         """
+        [PHASE 2 FEATURE - PRE-WIRED FOR BREAKDOWN STOP-MARKET EXECUTION]
         Cancels the active resting order associated with an entry.
         """
         order_id = entry.resting_order_id
@@ -246,10 +248,6 @@ class WatchlistManager:
         if current_spread_pct > 0.40:
             return True, "SPREAD_BLOWOUT", ReversalTriggerResult(triggered=False, evidence=f"Spread too wide ({current_spread_pct}% > 0.40%)")
 
-        # 3. Extended Dump Missed (>5.0% below swing high without being caught)
-        if entry.swing_high > 0 and current_price < entry.swing_high * 0.95:
-            return True, "DUMP_MISSED", ReversalTriggerResult(triggered=False, evidence="Missed dump >5% below swing high")
-
         if not klines_15m or len(klines_15m) < 3:
             return False, None, ReversalTriggerResult(triggered=False, evidence="Insufficient 15m candle history")
 
@@ -289,26 +287,42 @@ class WatchlistManager:
         # Fibonacci Retracement from local swing high (Fib safety gate: 0.0 at peak, 1.0 at base)
         retracement = (win_high - close_p) / swing_span
 
+        # Check both closed candle [-2] (if history allows) and latest candle [-1]
+        candles_to_check = []
+        if len(klines_15m) >= 4:
+            candles_to_check.append((klines_15m[-2], "closed [-2]"))
+        candles_to_check.append((latest_c, "latest [-1]"))
+
         # ----------------------------------------------------
         # PATTERN 1: Upper Wick Rejection (Exhaustion Reversal)
         # ----------------------------------------------------
-        p1_wick_ratio = upper_wick >= 1.8 * body
-        p1_wick_range = (upper_wick / total_range) >= 0.40 if total_range > 0 else False
-        p1_abs_wick = (upper_wick >= 0.003 * high_p) or (upper_wick >= 0.5 * effective_atr)
-        p1_closed_pullback = (close_p < open_p) or (close_p <= high_p * (1.0 - 0.004))
-        p1_fib_safe = retracement <= 0.382
+        for cand_ref, cand_label in candles_to_check:
+            c_open = float(cand_ref.get("open", 0))
+            c_high = float(cand_ref.get("high", 0))
+            c_low = float(cand_ref.get("low", 0))
+            c_close = float(cand_ref.get("close", 0))
+            c_wick = c_high - max(c_open, c_close)
+            c_body = abs(c_close - c_open)
+            c_range = c_high - c_low
+            c_atr = entry.atr if entry.atr > 0 else c_range
 
-        if p1_wick_ratio and p1_wick_range and p1_abs_wick and p1_closed_pullback and p1_fib_safe:
-            return False, None, ReversalTriggerResult(
-                triggered=True,
-                pattern="UPPER_WICK_REJECTION",
-                trigger_price=current_price,
-                evidence=(
-                    f"15m Upper Wick Rejection confirmed: wick={upper_wick:.6f} ({upper_wick/total_range*100:.1f}% range), "
-                    f">=1.8x body ({body:.6f}), closed pullback, Fib retracement={retracement:.3f} <= 0.382."
-                ),
-                reasons=["wick_ratio_met", "wick_range_met", "abs_wick_met", "closed_pullback_met", "fib_safe"]
-            )
+            p1_wick_ratio = c_wick >= 1.8 * c_body
+            p1_wick_range = (c_wick / c_range) >= 0.40 if c_range > 0 else False
+            p1_abs_wick = (c_wick >= 0.003 * c_high) or (c_wick >= 0.5 * c_atr)
+            p1_pullback = (c_close < c_open) or (current_price <= c_high * (1.0 - 0.004)) or (c_close <= c_high * (1.0 - 0.004))
+            p1_fib_safe = retracement <= 0.382
+
+            if p1_wick_ratio and p1_wick_range and p1_abs_wick and p1_pullback and p1_fib_safe:
+                return False, None, ReversalTriggerResult(
+                    triggered=True,
+                    pattern="UPPER_WICK_REJECTION",
+                    trigger_price=current_price,
+                    evidence=(
+                        f"15m Upper Wick Rejection confirmed on {cand_label}: wick={c_wick:.6f} ({c_wick/c_range*100:.1f}% range), "
+                        f">=1.8x body ({c_body:.6f}), pullback confirmed, Fib retracement={retracement:.3f} <= 0.382."
+                    ),
+                    reasons=["wick_ratio_met", "wick_range_met", "abs_wick_met", "closed_pullback_met", "fib_safe"]
+                )
 
         # ----------------------------------------------------
         # PATTERN 2: Local Break of Structure (Micro Breakdown 15m)
@@ -329,7 +343,7 @@ class WatchlistManager:
                 pass
         sma_vol = (sum(recent_vols) / len(recent_vols)) if recent_vols else vol
 
-        p2_structure_break = close_p < min_prev_low
+        p2_structure_break = (close_p < min_prev_low) or (current_price < min_prev_low)
         p2_volume_confirm = vol >= 1.3 * sma_vol if sma_vol > 0 else True
         p2_fib_safe = retracement <= 0.382
 
@@ -345,6 +359,13 @@ class WatchlistManager:
                 reasons=["structure_break_met", "volume_confirm_met", "fib_safe"]
             )
 
+        # ----------------------------------------------------
+        # 5. Extended Dump Missed Gate (>5.0% below swing high without reversal being caught)
+        # Evaluated ONLY AFTER checking reversal patterns so textbook reversals aren't prematurely evicted!
+        # ----------------------------------------------------
+        if entry.swing_high > 0 and current_price < entry.swing_high * 0.95:
+            return True, "DUMP_MISSED", ReversalTriggerResult(triggered=False, evidence="Missed dump >5% below swing high")
+
         # Neither pattern triggered, keep watching
         return False, None, ReversalTriggerResult(
             triggered=False,
@@ -357,6 +378,7 @@ class WatchlistManager:
         session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
+        [PHASE 2 FEATURE - PRE-WIRED FOR BREAKDOWN STOP-MARKET EXECUTION]
         Startup & Cycle Reconciliation:
         1. Checks status of existing resting orders on exchange.
         2. Detects filled resting orders.

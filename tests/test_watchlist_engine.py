@@ -236,20 +236,11 @@ def test_pessimistic_quota_reservation_in_orchestrator(mocker):
     orch = SessionOrchestrator(config)
     orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
 
-    # 1 occupied position
-    mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value={"OCCUPIED1-USDT"})
-
-    # 1 resting order in watchlist
-    orch.watchlist.add_candidate("WATCH1-USDT", 1.0, conviction_score=80)
-    entry = orch.watchlist.get_entry("WATCH1-USDT")
-    assert entry is not None
-    entry.resting_order_id = "999"
-    entry.resting_client_order_id = "bx_short_test"
-
-    # Total used slots = 1 (occupied) + 1 (resting) = 2 == quota (2)
-    # Available slots = 0 -> Quota exhausted!
-    mock_cancel_resting = mocker.patch.object(orch.watchlist, "cancel_entry_resting_order")
+    # 2 occupied positions on exchange == quota (2)
+    mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value={"OCCUPIED1-USDT", "OCCUPIED2-USDT"})
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[])
 
     res = orch.run_cycle(dry_run=True)
-    assert res.get("status") in ("QUOTA_EXHAUSTED", "WATCHLIST_ACTIVE")
+    assert res.get("status") == "QUOTA_EXHAUSTED"
+    assert res.get("filled") == 2
+    assert res.get("quota") == 2

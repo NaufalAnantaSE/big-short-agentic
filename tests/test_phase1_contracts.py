@@ -191,10 +191,16 @@ def test_local_paper_execution_mode_never_calls_exchange(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.001, "atr_to_friction": 8.0})
-    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
+    from ai_evaluator import BatchTriageResult, TriageCandidate
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="1000PEPE-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85)],
+        selected_finalists=["1000PEPE-USDT"],
+        is_valid=True
+    ))
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", return_value=AIEvaluationResult(
         symbol="1000PEPE-USDT", decision="ENTER_SHORT", confidence=85, is_valid=True
     ))
-    mocker.patch.object(orch.ai, "evaluate_adversarial", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="1000PEPE-USDT", decision="ENTER_SHORT", confidence=85, is_valid=True
     ))
 

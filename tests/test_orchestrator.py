@@ -38,7 +38,7 @@ def test_preflight_leverage_assertion_before_order(mocker):
         setup_type="PUMP_EXHAUSTION",
         is_valid=True
     ))
-    mocker.patch.object(orch.ai, "evaluate_adversarial", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", return_value=AIEvaluationResult(
         symbol="1000PEPE-USDT",
         decision="ENTER_SHORT",
         confidence=85,

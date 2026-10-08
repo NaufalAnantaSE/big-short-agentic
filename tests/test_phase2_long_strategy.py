@@ -8,9 +8,10 @@ Tests:
 5. Orchestrator executes LONG in EXCHANGE_DEMO with set_leverage(side='LONG') and place_order(side='BUY', position_side='LONG').
 """
 
+import json
 import pytest
 from unittest.mock import MagicMock
-from ai_evaluator import normalize_ai_payload, AIEvaluationResult, AIEvaluator
+from ai_evaluator import normalize_ai_payload, AIEvaluationResult, AIEvaluator, BatchTriageResult, TriageCandidate
 from plain_explainer import humanize_ai_decision
 from orchestrator import SessionOrchestrator
 from config import AppConfig
@@ -32,8 +33,17 @@ def test_ai_evaluator_supports_long_decisions():
     # Quality gate: confidence < 70 should fallback to WAIT
     cfg = AppConfig(api_key="mock", secret_key="mock")
     evaluator = AIEvaluator(cfg)
-    mock_call = MagicMock(return_value=({"decision": "ENTER_LONG", "confidence": 65, "setup_type": "BULLISH_PULLBACK"}, {}, 10.0))
-    evaluator._chat_call = mock_call
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({"decision": "ENTER_LONG", "confidence": 65, "setup_type": "BULLISH_PULLBACK"})
+            }
+        }],
+        "usage": {"total_tokens": 100}
+    }
+    evaluator.client.post = MagicMock(return_value=mock_resp)
 
     res = evaluator.evaluate_candidate(
         symbol="DOGE-USDT",
@@ -91,10 +101,15 @@ def test_orchestrator_paper_mode_handles_long_without_exchange_calls(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.07, "funding_rate": 0.0001, "atr_to_friction": 10.0})
-    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="SOL-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85)],
+        selected_finalists=["SOL-USDT"],
+        is_valid=True
+    ))
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", return_value=AIEvaluationResult(
         symbol="SOL-USDT", decision="ENTER_LONG", confidence=85, is_valid=True
     ))
-    mocker.patch.object(orch.ai, "evaluate_adversarial", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="SOL-USDT", decision="ENTER_LONG", confidence=85, is_valid=True
     ))
 
@@ -138,10 +153,15 @@ def test_orchestrator_exchange_demo_executes_long_order(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.07, "funding_rate": 0.0001, "atr_to_friction": 10.0})
-    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="SOL-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85)],
+        selected_finalists=["SOL-USDT"],
+        is_valid=True
+    ))
+    mocker.patch.object(orch.ai, "evaluate_deep_candidate", return_value=AIEvaluationResult(
         symbol="SOL-USDT", decision="ENTER_LONG", confidence=85, is_valid=True
     ))
-    mocker.patch.object(orch.ai, "evaluate_adversarial", return_value=AIEvaluationResult(
+    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="SOL-USDT", decision="ENTER_LONG", confidence=85, is_valid=True
     ))
 
