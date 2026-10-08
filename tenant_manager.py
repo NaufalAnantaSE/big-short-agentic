@@ -97,6 +97,8 @@ class TenantSessionManager:
             quota = int(sess.get("quota", 10))
 
             orch = self.get_orchestrator(user_id)
+            sess_mode = sess.get("mode", "PUMP_GAINERS")
+            orch.config.universe_mode = sess_mode
             if not orch.current_session:
                 orch.current_session = SessionState(
                     session_id=sess["session_id"],
@@ -108,10 +110,12 @@ class TenantSessionManager:
                     execution_mode=sess.get("execution_mode", "EXCHANGE_DEMO"),
                     direction_mode=sess.get("direction_mode", "SHORT"),
                     exit_policy=sess.get("exit_policy", "MANUAL_ONLY"),
+                    universe_mode=sess_mode,
                     filled_count=active_count,
                     started_at=sess["started_at"]
                 )
             else:
+                orch.current_session.universe_mode = sess_mode
                 orch.current_session.filled_count = active_count
 
             # If quota is already filled:
@@ -251,6 +255,7 @@ class TenantSessionManager:
         execution_mode = "EXCHANGE_DEMO"
         direction_mode = "SHORT"
         exit_policy = "MANUAL_ONLY"
+        universe_mode = "PUMP_GAINERS"
 
         if current_sess:
             current_sess.filled_count = active_count
@@ -267,6 +272,7 @@ class TenantSessionManager:
             execution_mode = current_sess.execution_mode
             direction_mode = current_sess.direction_mode
             exit_policy = current_sess.exit_policy
+            universe_mode = getattr(current_sess, "universe_mode", "PUMP_GAINERS")
             db.update_session_status(current_sess.session_id, current_status, active_count)
         elif latest_db_sess:
             sess_id = latest_db_sess["session_id"]
@@ -278,6 +284,7 @@ class TenantSessionManager:
             execution_mode = latest_db_sess.get("execution_mode", "EXCHANGE_DEMO")
             direction_mode = latest_db_sess.get("direction_mode", "SHORT")
             exit_policy = latest_db_sess.get("exit_policy", "MANUAL_ONLY")
+            universe_mode = latest_db_sess.get("mode", "PUMP_GAINERS")
             if current_status in ("ACTIVE_SEARCHING", "EXHAUSTED"):
                 if active_count >= quota:
                     current_status = "EXHAUSTED"
@@ -321,6 +328,8 @@ class TenantSessionManager:
             "execution_mode": execution_mode,
             "direction_mode": direction_mode,
             "exit_policy": exit_policy,
+            "mode": universe_mode,
+            "universe_mode": universe_mode,
             "auto_scan": auto_scan,
             "scan_interval": scan_interval,
             "last_scan_at": last_scan_at,
@@ -362,6 +371,10 @@ class TenantSessionManager:
     ) -> Dict[str, Any]:
         """Initializes and persists a new trading session for this user."""
         orch = self.get_orchestrator(user_id)
+        validated_mode = str(mode or "PUMP_GAINERS").upper()
+        if validated_mode not in ("PUMP_GAINERS", "MEME_ONLY"):
+            validated_mode = "PUMP_GAINERS"
+        orch.config.universe_mode = validated_mode
         session_state = orch.start_session(
             margin_per_pos=margin_per_pos,
             leverage=leverage,
@@ -369,7 +382,8 @@ class TenantSessionManager:
             environment=environment,
             execution_mode=execution_mode,
             direction_mode=direction_mode,
-            exit_policy=exit_policy
+            exit_policy=exit_policy,
+            universe_mode=validated_mode
         )
         
         now = time.time()
@@ -382,7 +396,7 @@ class TenantSessionManager:
             leverage=leverage,
             quota=quota,
             filled_count=0,
-            mode=mode,
+            mode=validated_mode,
             is_live=is_live,
             started_at=session_state.started_at,
             auto_scan=auto_scan,
@@ -427,7 +441,8 @@ class TenantSessionManager:
             "margin_per_pos": margin_per_pos,
             "leverage": leverage,
             "quota": quota,
-            "mode": mode,
+            "mode": validated_mode,
+            "universe_mode": validated_mode,
             "is_live": is_live,
             "environment": environment,
             "execution_mode": execution_mode,

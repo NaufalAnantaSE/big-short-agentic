@@ -175,9 +175,9 @@
 
           <!-- Execution Status -->
           <div v-if="item.executed" class="p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold">
-            Order Jual Berhasil Dikirim ke BingX (Order ID: {{ item.order_id }})
+            {{ (item.decision === 'ENTER_LONG' || item.ai_decision === 'ENTER_LONG') ? 'Order Beli' : 'Order Jual' }} Berhasil Dikirim ke BingX (Order ID: {{ item.order_id }})
           </div>
-          <div v-else-if="item.dry_run && item.decision === 'ENTER_SHORT'" class="p-2 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-800 dark:text-sky-300 text-[11px] font-bold">
+          <div v-else-if="item.dry_run && (item.decision === 'ENTER_SHORT' || item.decision === 'ENTER_LONG' || item.ai_decision === 'ENTER_SHORT' || item.ai_decision === 'ENTER_LONG')" class="p-2 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-800 dark:text-sky-300 text-[11px] font-bold">
             Simulasi Selesai: Sinyal siap eksekusi lot {{ item.quantity }} koin.
           </div>
         </div>

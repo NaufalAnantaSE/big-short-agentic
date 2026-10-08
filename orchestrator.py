@@ -27,6 +27,7 @@ class SessionState(BaseModel):
     execution_mode: str = ExecutionMode.EXCHANGE_DEMO.value
     direction_mode: str = DirectionMode.SHORT.value
     exit_policy: str = ExitPolicy.MANUAL_ONLY.value
+    universe_mode: str = "PUMP_GAINERS"
     executed_symbols: List[str] = Field(default_factory=list)
     started_at: float = 0.0
 
@@ -51,10 +52,12 @@ class SessionOrchestrator:
         environment: str = Environment.BINGX_VST.value,
         execution_mode: str = ExecutionMode.EXCHANGE_DEMO.value,
         direction_mode: str = DirectionMode.SHORT.value,
-        exit_policy: str = ExitPolicy.MANUAL_ONLY.value
+        exit_policy: str = ExitPolicy.MANUAL_ONLY.value,
+        universe_mode: str = "PUMP_GAINERS"
     ) -> SessionState:
         """Initializes and activates a new entry session."""
         session_id = f"bx_sess_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        self.config.universe_mode = universe_mode
         self.current_session = SessionState(
             session_id=session_id,
             status="ACTIVE_SEARCHING",
@@ -65,6 +68,7 @@ class SessionOrchestrator:
             execution_mode=execution_mode,
             direction_mode=direction_mode,
             exit_policy=exit_policy,
+            universe_mode=universe_mode,
             started_at=time.time()
         )
         AuditLogger.log_event("SESSION_START", {
@@ -74,7 +78,8 @@ class SessionOrchestrator:
             "environment": environment,
             "execution_mode": execution_mode,
             "direction_mode": direction_mode,
-            "exit_policy": exit_policy
+            "exit_policy": exit_policy,
+            "universe_mode": universe_mode
         }, session_id=session_id)
 
         # Startup reconciliation: Phase 2 feature, removed from hot path
@@ -496,8 +501,9 @@ class SessionOrchestrator:
             }
 
         current_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
+        current_universe_mode = getattr(self.current_session, "universe_mode", self.config.universe_mode) or self.config.universe_mode
         candidates = self.scanner.scan_universe(
-            mode=self.config.universe_mode,
+            mode=current_universe_mode,
             limit_candidates=limit_candidates,
             direction=current_dir
         )

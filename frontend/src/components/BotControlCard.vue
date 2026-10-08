@@ -56,9 +56,10 @@
             :disabled="isSessionRunning"
             class="clay-input w-full h-11 px-3 text-sm text-text-main font-semibold"
           >
-            <option value="PUMP_GAINERS">PUMP_GAINERS (Semua Altcoin yang Sedang Melonjak)</option>
-            <option value="MEME_ONLY">MEME_ONLY (Khusus Memecoin Populer Saja)</option>
+            <option value="PUMP_GAINERS">Semua Altcoin (naik &amp; turun)</option>
+            <option value="MEME_ONLY">Memecoin Saja</option>
           </select>
+          <p class="text-[11px] text-text-muted mt-1">Mode "Semua Altcoin" memindai koin yang naik maupun turun — bukan hanya yang sedang pump.</p>
         </div>
 
         <!-- Direction Mode Selector -->
@@ -89,7 +90,7 @@
         </div>
       </template>
       <p v-else class="text-xs text-text-muted leading-relaxed">
-        Strategi otomatis: AI memindai koin yang sedang melonjak lalu ambil posisi short saat momentum jenuh.
+        Strategi otomatis: AI memindai pergerakan altcoin lalu ambil posisi saat momentum jenuh.
       </p>
     </div>
 
@@ -192,6 +193,8 @@
             <li>Modal per koin: <span class="font-mono">${{ margin }} USDT</span> (≈ Rp {{ formatIDR(margin) }})</li>
             <li>Maksimal {{ quota }} posisi bersamaan</li>
             <li>Mode: {{ isLiveMode ? 'LIVE (uang sungguhan)' : 'Demo (uang virtual)' }}</li>
+            <li>Semesta Koin: <span class="font-semibold">{{ universeMode === 'MEME_ONLY' ? 'Memecoin Saja' : 'Semua Altcoin' }}</span></li>
+            <li>Arah Trading: <span class="font-semibold">{{ directionMode === 'BOTH' ? 'Dua Arah (Long & Short)' : (directionMode === 'LONG' ? 'Long Only' : 'Short Only') }}</span></li>
           </ul>
           <p v-if="isLiveMode" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-300 font-bold">
             Perhatian: mode LIVE menggunakan saldo USDT asli Anda. Pastikan Anda memahami risikonya.
@@ -260,6 +263,7 @@ watch(() => props.sessionState, (newSess) => {
   if (newSess.quota !== undefined) quota.value = Number(newSess.quota)
   if (newSess.auto_scan !== undefined) autoScan.value = Boolean(newSess.auto_scan)
   if (newSess.direction_mode) directionMode.value = newSess.direction_mode
+  if (newSess.mode) universeMode.value = newSess.mode
   if (typeof newSess.next_scan_in === 'number') {
     countdown.value = newSess.next_scan_in
   }

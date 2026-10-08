@@ -25,8 +25,11 @@
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center space-x-2">
             <span class="text-sm font-extrabold text-text-main font-mono">{{ p.symbol }}</span>
-            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 uppercase">
-              SHORT {{ p.leverage }}x
+            <span :class="p.position_side === 'LONG'
+              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+              : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30'"
+              class="text-[10px] font-bold px-1.5 py-0.5 rounded-md border uppercase">
+              {{ p.position_side || 'SHORT' }} {{ p.leverage }}x
             </span>
           </div>
           <!-- PnL -->
