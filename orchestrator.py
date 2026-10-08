@@ -14,6 +14,7 @@ from audit_logger import AuditLogger
 from market_features import build_candidate_features, hard_gate
 from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, TradeAction, PlaybookType
 from strategy_playbook import evaluate_playbooks, PlaybookMatch
+from watchlist_manager import WatchlistManager
 
 class SessionState(BaseModel):
     session_id: str
@@ -40,6 +41,7 @@ class SessionOrchestrator:
         self.client = BingXClient(config)
         self.scanner = MarketScanner(self.client, config)
         self.ai = AIEvaluator(config)
+        self.watchlist = WatchlistManager()
         self.current_session: Optional[SessionState] = None
 
     def start_session(
@@ -75,12 +77,27 @@ class SessionOrchestrator:
             "direction_mode": direction_mode,
             "exit_policy": exit_policy
         }, session_id=session_id)
+
+        # Startup reconciliation: reconcile open and orphan resting orders on exchange
+        if self.config.api_key and self.config.api_key != "mock":
+            try:
+                self.watchlist.reconcile_resting_orders(self.client, session_id=session_id)
+            except Exception:
+                pass
+
         return self.current_session
 
     def stop_session(self) -> Optional[SessionState]:
-        """Terminates active session without touching existing open positions."""
+        """Terminates active session and cancels all linked resting orders."""
         if self.current_session:
             self.current_session.status = "TERMINATED"
+            for entry in self.watchlist.get_all_entries():
+                self.watchlist.cancel_entry_resting_order(
+                    entry=entry,
+                    reason="SESSION_STOPPED",
+                    client=self.client,
+                    session_id=self.current_session.session_id
+                )
         return self.current_session
 
     def run_cycle(self, dry_run: bool = True, limit_candidates: int = 5) -> Dict[str, Any]:
@@ -95,24 +112,203 @@ class SessionOrchestrator:
         if not self.current_session or self.current_session.status not in ("ACTIVE_SEARCHING", "EXHAUSTED"):
             return {"status": "NO_ACTIVE_SESSION", "message": "No active session in searching state."}
 
-        # Synchronize filled_count with actual positions/orders on exchange
-        if not dry_run and self.config.api_key != "mock":
+        # Synchronize and reconcile open/resting orders on exchange
+        if not dry_run and self.config.api_key and self.config.api_key != "mock":
             try:
-                occupied = self.scanner.get_occupied_symbols()
-                self.current_session.filled_count = len(occupied)
-                if self.current_session.filled_count < self.current_session.quota and self.current_session.status == "EXHAUSTED":
-                    self.current_session.status = "ACTIVE_SEARCHING"
+                self.watchlist.reconcile_resting_orders(self.client, session_id=self.current_session.session_id)
             except Exception:
                 pass
 
-        if self.current_session.filled_count >= self.current_session.quota:
+        try:
+            occupied = self.scanner.get_occupied_symbols()
+        except Exception:
+            occupied = set()
+
+        occupied_count = len(occupied)
+        resting_count = self.watchlist.count_resting_orders()
+        slots_used = occupied_count + resting_count
+        self.current_session.filled_count = occupied_count
+
+        available_slots = self.current_session.quota - slots_used
+
+        if available_slots <= 0 and self.current_session.filled_count >= self.current_session.quota:
             self.current_session.status = "EXHAUSTED"
+            for entry in self.watchlist.get_all_entries():
+                self.watchlist.cancel_entry_resting_order(entry, reason="QUOTA_EXHAUSTED", client=self.client, session_id=self.current_session.session_id)
             return {"status": "QUOTA_EXHAUSTED", "filled": self.current_session.filled_count, "quota": self.current_session.quota}
+
+        if self.current_session.filled_count < self.current_session.quota and self.current_session.status == "EXHAUSTED":
+            self.current_session.status = "ACTIVE_SEARCHING"
 
         is_local_paper = bool(self.current_session and self.current_session.execution_mode == ExecutionMode.LOCAL_PAPER.value)
         effective_dry_run = dry_run or is_local_paper
 
-        # Step 1: Scan candidates
+        cycle_results = []
+
+        # Step 1: Active Watchlist Evaluation (Priority execution before general scan)
+        for entry in self.watchlist.get_all_entries():
+            if available_slots <= 0:
+                break
+            if entry.symbol in occupied:
+                self.watchlist.evict_entry(entry.symbol, reason="POSITION_ALREADY_OPEN", client=self.client, session_id=self.current_session.session_id)
+                continue
+
+            try:
+                w_klines = self.client.get_klines(entry.symbol, interval="15m", limit=15)
+                w_depth = self.client.get_depth(entry.symbol, limit=2)
+                bids = w_depth.get("bids", []) if isinstance(w_depth, dict) else []
+                asks = w_depth.get("asks", []) if isinstance(w_depth, dict) else []
+                bid1 = float(bids[0][0]) if bids else entry.initial_price
+                ask1 = float(asks[0][0]) if asks else entry.initial_price
+                w_curr_price = (bid1 + ask1) / 2.0 if bid1 > 0 and ask1 > 0 else entry.initial_price
+                w_spread = ((ask1 - bid1) / bid1) * 100.0 if bid1 > 0 else 0.0
+
+                should_evict, evict_reason, trigger_res = self.watchlist.check_deterministic_reversal(
+                    entry=entry,
+                    klines_15m=w_klines,
+                    current_price=w_curr_price,
+                    current_spread_pct=w_spread
+                )
+
+                if should_evict:
+                    self.watchlist.evict_entry(entry.symbol, reason=evict_reason or "EVICTED", client=self.client, session_id=self.current_session.session_id)
+                    continue
+
+                if trigger_res.triggered:
+                    AuditLogger.log_event("WATCHLIST_TRIGGER", {
+                        "symbol": entry.symbol,
+                        "pattern": trigger_res.pattern,
+                        "trigger_price": w_curr_price,
+                        "evidence": trigger_res.evidence,
+                        "reasons": trigger_res.reasons
+                    }, session_id=self.current_session.session_id)
+
+                    contracts = self.client.get_contracts()
+                    contract_info = next((c for c in contracts if c.get("symbol") == entry.symbol), {})
+
+                    sizing = SizingCalculator.calculate_lot(
+                        symbol=entry.symbol,
+                        margin_usdt=self.current_session.margin_per_pos,
+                        target_leverage=entry.leverage,
+                        current_price=w_curr_price,
+                        contract_info=contract_info,
+                        max_allowed_leverage=20,
+                        direction=entry.direction,
+                        atr=entry.atr if entry.atr > 0 else None,
+                        target_rr=2.0
+                    )
+
+                    if sizing.is_valid:
+                        target_pos_side = entry.direction.upper()
+                        target_order_side = "SELL" if target_pos_side == "SHORT" else "BUY"
+                        prefix = "bx_short" if target_pos_side == "SHORT" else "bx_long"
+                        client_order_id = f"{prefix}_wl_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+
+                        w_exec_report = {
+                            "symbol": entry.symbol,
+                            "price": w_curr_price,
+                            "ai_decision": "ENTER_SHORT" if target_pos_side == "SHORT" else "ENTER_LONG",
+                            "ai_confidence": entry.conviction_score,
+                            "ai_evidence": f"[WATCHLIST_TRIGGER {trigger_res.pattern}] {trigger_res.evidence}",
+                            "playbook": None,
+                            "sizing": sizing.model_dump(),
+                            "stop_loss_price": sizing.stop_loss_price,
+                            "take_profit_price": sizing.take_profit_price,
+                            "sl_percent": sizing.sl_percent,
+                            "tp_percent": sizing.tp_percent,
+                            "risk_amount_usdt": sizing.risk_amount_usdt,
+                            "potential_profit_usdt": sizing.potential_profit_usdt,
+                            "executed": False,
+                            "order_id": None
+                        }
+
+                        if effective_dry_run:
+                            tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
+                            w_exec_report["executed"] = False
+                            w_exec_report["dry_run"] = True
+                            w_exec_report["client_order_id"] = client_order_id
+                            tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
+                            w_exec_report["message"] = (
+                                f"{tag} [WATCHLIST-REVERSAL] Set leverage {sizing.effective_leverage}x | "
+                                f"Submit {target_pos_side} MARKET order: {sizing.quantity} {entry.symbol}{tpsl_info}"
+                            )
+                            self.current_session.filled_count += 1
+                            self.current_session.executed_symbols.append(entry.symbol)
+                            self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
+                            available_slots -= 1
+                            cycle_results.append(w_exec_report)
+                        else:
+                            try:
+                                self.client.set_leverage(
+                                    symbol=entry.symbol,
+                                    leverage=sizing.effective_leverage,
+                                    side=target_pos_side
+                                )
+                                AuditLogger.log_leverage_adjustment(
+                                    symbol=entry.symbol,
+                                    leverage=sizing.effective_leverage,
+                                    side=target_pos_side,
+                                    session_id=self.current_session.session_id
+                                )
+                                order_res = self.client.place_order(
+                                    symbol=entry.symbol,
+                                    side=target_order_side,
+                                    position_side=target_pos_side,
+                                    order_type="MARKET",
+                                    quantity=sizing.quantity,
+                                    client_order_id=client_order_id,
+                                    stop_loss_price=sizing.stop_loss_price,
+                                    take_profit_price=sizing.take_profit_price
+                                )
+                                order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
+                                order_id_str = str(order_id_raw)
+                                w_exec_report["executed"] = True
+                                w_exec_report["dry_run"] = False
+                                w_exec_report["client_order_id"] = client_order_id
+                                w_exec_report["order_id"] = order_id_str
+                                self.current_session.filled_count += 1
+                                self.current_session.executed_symbols.append(entry.symbol)
+                                self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
+                                available_slots -= 1
+
+                                AuditLogger.log_order_submission(
+                                    symbol=entry.symbol,
+                                    side=target_order_side,
+                                    position_side=target_pos_side,
+                                    order_type="MARKET",
+                                    quantity=sizing.quantity,
+                                    price=w_curr_price,
+                                    client_order_id=client_order_id,
+                                    order_id=order_id_str,
+                                    status="FILLED",
+                                    session_id=self.current_session.session_id,
+                                    stop_loss_price=sizing.stop_loss_price,
+                                    take_profit_price=sizing.take_profit_price
+                                )
+                                cycle_results.append(w_exec_report)
+                            except BingXAPIError as e:
+                                w_exec_report["executed"] = False
+                                w_exec_report["error"] = str(e)
+                                AuditLogger.log_event("ORDER_ERROR", {
+                                    "symbol": entry.symbol,
+                                    "error": str(e),
+                                    "client_order_id": client_order_id
+                                }, session_id=self.current_session.session_id)
+                                cycle_results.append(w_exec_report)
+            except Exception as w_err:
+                AuditLogger.log_event("WATCHLIST_EVAL_ERROR", {
+                    "symbol": entry.symbol,
+                    "error": str(w_err)
+                }, session_id=self.current_session.session_id)
+
+        # Step 2: Scan candidates if slots are still available
+        if available_slots <= 0:
+            return {
+                "status": "WATCHLIST_ACTIVE",
+                "message": "Watchlist evaluated; remaining slots occupied by resting orders or active positions.",
+                "cycle_results": cycle_results
+            }
+
         current_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
         candidates = self.scanner.scan_universe(
             mode=self.config.universe_mode,
@@ -120,9 +316,11 @@ class SessionOrchestrator:
             direction=current_dir
         )
         if not candidates:
-            return {"status": "NO_CANDIDATES", "message": "No eligible unoccupied pairs found."}
-
-        cycle_results = []
+            return {
+                "status": "NO_CANDIDATES" if not cycle_results else "WATCHLIST_EXECUTED",
+                "message": "No eligible unoccupied pairs found." if not cycle_results else "Watchlist processed.",
+                "cycle_results": cycle_results
+            }
 
         deep_count = 0
         cycle_tokens = 0
@@ -342,6 +540,23 @@ class SessionOrchestrator:
                             "error": str(e),
                             "client_order_id": client_order_id
                         }, session_id=self.current_session.session_id)
+            elif ai_res.decision == "WAIT" and ai_res.confidence >= 65:
+                # Add to stateful Active Watchlist for continuous deterministic tracking
+                added, status_msg = self.watchlist.add_candidate(
+                    symbol=cand.symbol,
+                    current_price=cand.last_price,
+                    conviction_score=ai_res.confidence,
+                    playbook=str(playbook_match.playbook) if playbook_match else None,
+                    atr=atr_val or 0.0,
+                    direction=pos_dir,
+                    margin_per_pos=self.current_session.margin_per_pos,
+                    leverage=effective_target_lev,
+                    stop_loss_price=sizing.stop_loss_price,
+                    take_profit_price=sizing.take_profit_price,
+                    client=self.client,
+                    session_id=self.current_session.session_id
+                )
+                execution_report["watchlist_status"] = status_msg
 
             cycle_results.append(execution_report)
 

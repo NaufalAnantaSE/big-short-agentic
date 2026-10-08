@@ -165,6 +165,7 @@ class BingXClient:
         quantity: float,
         client_order_id: str,
         price: Optional[float] = None,
+        time_in_force: Optional[str] = None,
         stop_loss_price: Optional[float] = None,
         take_profit_price: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -174,6 +175,7 @@ class BingXClient:
         """
         norm_side = side.upper()
         norm_pos_side = position_side.upper()
+        norm_type = order_type.upper()
         if norm_pos_side == "SHORT" and norm_side != "SELL":
             raise ValueError(f"Invalid order pairing: To open SHORT, side must be SELL (got side='{side}', position_side='{position_side}')")
         if norm_pos_side == "LONG" and norm_side != "BUY":
@@ -185,11 +187,16 @@ class BingXClient:
             "symbol": symbol,
             "side": norm_side,
             "positionSide": norm_pos_side,
-            "type": order_type,
+            "type": norm_type,
             "quantity": quantity,
             "clientOrderId": client_order_id.lower()[:40],
         }
-        if price is not None:
+        if norm_type == "LIMIT":
+            if price is None:
+                raise ValueError("Price is required for LIMIT orders.")
+            params["price"] = float(price)
+            params["timeInForce"] = time_in_force or "GTC"
+        elif price is not None:
             params["price"] = price
 
         if stop_loss_price is not None:
@@ -269,3 +276,32 @@ class BingXClient:
             "clientOrderId": client_order_id.lower()[:40],
         }
         return self._request("POST", "/openApi/swap/v2/trade/order", params=params, signed=True)
+
+    def cancel_order(
+        self,
+        symbol: str,
+        order_id: Optional[Any] = None,
+        client_order_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Cancels an open order on BingX Swap V2 by orderId or clientOrderId.
+        DELETE /openApi/swap/v2/trade/order
+        """
+        params: Dict[str, Any] = {"symbol": symbol}
+        if order_id is not None:
+            params["orderId"] = order_id
+        if client_order_id:
+            params["clientOrderID"] = client_order_id.lower()[:40]
+        if "orderId" not in params and "clientOrderID" not in params:
+            raise ValueError("Either order_id or client_order_id must be provided to cancel_order.")
+        return self._request("DELETE", "/openApi/swap/v2/trade/order", params=params, signed=True)
+
+    def cancel_all_open_orders(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Cancels all open orders for a specific symbol or all symbols.
+        DELETE /openApi/swap/v2/trade/allOpenOrders
+        """
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol
+        return self._request("DELETE", "/openApi/swap/v2/trade/allOpenOrders", params=params, signed=True)

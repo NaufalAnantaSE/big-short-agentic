@@ -325,7 +325,9 @@ class TenantSessionManager:
             "scan_interval": scan_interval,
             "last_scan_at": last_scan_at,
             "next_scan_in": next_scan_in,
-            "is_scanning": (user_id in self._currently_scanning)
+            "is_scanning": (user_id in self._currently_scanning),
+            "watchlist": [entry.model_dump() for entry in orch.watchlist.get_all_entries()] if orch else [],
+            "resting_orders_count": orch.watchlist.count_resting_orders() if orch else 0
         }
 
         return {
