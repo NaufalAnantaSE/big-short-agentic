@@ -106,6 +106,102 @@ def build_snapshot_prompt(candidates: list[Dict[str, Any]]) -> str:
     return "Return strict JSON. Evaluate short thesis versus squeeze risk using funding_rate, open interest, depth and multi-timeframe data. " + json.dumps(candidates, separators=(",", ":"))
 
 
+def build_batch_triage_prompt(candidate_summaries: list[Dict[str, Any]], direction: str = "SHORT") -> str:
+    direction_upper = direction.upper()
+    return (
+        f"You are an institutional crypto quantitative analyst performing rapid comparative triage across multiple screened candidates.\n"
+        f"Strategy Target: {direction_upper} setups among recently pumped or volatile tokens.\n\n"
+        f"Available Actions per candidate:\n"
+        f"- DEEP_ANALYZE: Strongest immediate setups showing top exhaustion, buyer dry-up, or clean breakdown. (Cap: select at most 2 finalists).\n"
+        f"- WATCH: High-quality setup that is currently premature (e.g. still ascending into resistance, needs further reversal/wick confirmation before entry).\n"
+        f"- SKIP: Weak setup, high squeeze danger, low volume, or poor risk:reward.\n\n"
+        f"Screened Candidates:\n{json.dumps(candidate_summaries, separators=(',', ':'))}\n\n"
+        f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
+        f'{{"ranked_candidates": [{{"symbol": "<symbol>", "rank": 1, "action": "DEEP_ANALYZE" | "WATCH" | "SKIP", '
+        f'"conviction_score": <int 0-100>, "triage_reason": "<short comparative reason>"}}], '
+        f'"selected_finalists": ["<symbol>"]}}'
+    )
+
+
+def normalize_batch_triage_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    raw_list = parsed.get("ranked_candidates", [])
+    if not isinstance(raw_list, list):
+        if isinstance(parsed, list):
+            raw_list = parsed
+        else:
+            raw_list = []
+
+    action_map = {
+        "DEEP": "DEEP_ANALYZE",
+        "DEEP_ANALYZE": "DEEP_ANALYZE",
+        "ANALYZE": "DEEP_ANALYZE",
+        "ENTER": "DEEP_ANALYZE",
+        "ENTER_SHORT": "DEEP_ANALYZE",
+        "ENTER_LONG": "DEEP_ANALYZE",
+        "WATCH": "WATCH",
+        "WAIT": "WATCH",
+        "MONITOR": "WATCH",
+        "WATCHLIST": "WATCH",
+        "SKIP": "SKIP",
+        "PASS": "SKIP",
+        "REJECT": "SKIP",
+        "NO_TRADE": "SKIP",
+    }
+
+    normalized_candidates = []
+    for idx, item in enumerate(raw_list):
+        if not isinstance(item, dict):
+            continue
+        sym = str(item.get("symbol", "")).strip().upper()
+        if not sym:
+            continue
+        raw_act = str(item.get("action", item.get("decision", "SKIP"))).strip().upper()
+        act = action_map.get(raw_act, "SKIP")
+
+        raw_score = item.get("conviction_score", item.get("confidence", item.get("score", 50)))
+        score_val = 50
+        try:
+            score_val = int(raw_score)
+        except Exception:
+            try:
+                score_val = int(float(str(raw_score).replace("%", "")))
+            except Exception:
+                score_val = 50
+        score_val = max(0, min(100, score_val))
+
+        normalized_candidates.append({
+            "symbol": sym,
+            "rank": int(item.get("rank", idx + 1)),
+            "action": act,
+            "conviction_score": score_val,
+            "triage_reason": str(item.get("triage_reason", item.get("reason", ""))).strip(),
+        })
+
+    normalized_candidates.sort(key=lambda x: x["rank"])
+
+    raw_finalists = parsed.get("selected_finalists", [])
+    finalists: list[str] = []
+    if isinstance(raw_finalists, list):
+        for f in raw_finalists:
+            fsym = str(f).strip().upper()
+            if fsym and fsym not in finalists:
+                finalists.append(fsym)
+
+    if not finalists:
+        for c in normalized_candidates:
+            if c["action"] == "DEEP_ANALYZE":
+                finalists.append(c["symbol"])
+                if len(finalists) >= 2:
+                    break
+
+    finalists = finalists[:2]
+
+    return {
+        "ranked_candidates": normalized_candidates,
+        "selected_finalists": finalists
+    }
+
+
 def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
     symbol = candidate.get("symbol", "UNKNOWN")
     return (
@@ -116,6 +212,24 @@ def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
         f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
         f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<reason>", "risk_factors": "<risks>"}}'
     )
+
+
+class TriageCandidate(BaseModel):
+    symbol: str
+    rank: int = 1
+    action: str = Field(default="SKIP", description="DEEP_ANALYZE, WATCH, or SKIP")
+    conviction_score: int = Field(default=0, ge=0, le=100)
+    triage_reason: str = ""
+
+
+class BatchTriageResult(BaseModel):
+    ranked_candidates: list[TriageCandidate] = Field(default_factory=list)
+    selected_finalists: list[str] = Field(default_factory=list)
+    raw_response: str = ""
+    is_valid: bool = False
+    error_message: str = ""
+    usage: Dict[str, Any] = Field(default_factory=dict)
+    latency_ms: float = 0.0
 
 
 class AIEvaluationResult(BaseModel):
@@ -136,6 +250,33 @@ class AIEvaluator:
         self.config = config
         self.url = f"{config.ai_gateway_url.rstrip('/')}/chat/completions"
         self.client = httpx.Client(timeout=30.0)
+
+    def _chat_call_raw(
+        self,
+        prompt: str,
+        system_prompt: str = "You are a quantitative trading risk engine. Always output pure valid JSON.",
+        max_tokens: int = 650
+    ) -> tuple[Dict[str, Any], Dict[str, Any], float]:
+        payload = {
+            "model": self.config.ai_model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+            "stream": False
+        }
+        t0 = time.perf_counter()
+        resp = self.client.post(self.url, json=payload)
+        dt = (time.perf_counter() - t0) * 1000
+        if resp.status_code != 200:
+            raise ValueError(f"HTTP {resp.status_code}: {resp.text}")
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = extract_json_from_llm(content)
+        usage = data.get("usage", {}) if isinstance(data.get("usage", {}), dict) else {}
+        return parsed, usage, dt
 
     def _chat_call(self, prompt: str, system_prompt: str = "You are a quantitative trading risk engine. Always output pure valid JSON.") -> tuple[Dict[str, Any], Dict[str, Any], float]:
         payload = {
@@ -158,6 +299,44 @@ class AIEvaluator:
         parsed = normalize_ai_payload(extract_json_from_llm(content))
         usage = data.get("usage", {}) if isinstance(data.get("usage", {}), dict) else {}
         return parsed, usage, dt
+
+    def evaluate_batch_triage(
+        self,
+        candidate_summaries: list[Dict[str, Any]],
+        direction: str = "SHORT"
+    ) -> BatchTriageResult:
+        """
+        Tier 1: Evaluates multiple screened candidates in a single LLM call for comparative ranking.
+        Categorizes each into DEEP_ANALYZE, WATCH, or SKIP, and selects up to 2 finalists.
+        """
+        if not candidate_summaries:
+            return BatchTriageResult(
+                ranked_candidates=[],
+                selected_finalists=[],
+                is_valid=True
+            )
+
+        prompt = build_batch_triage_prompt(candidate_summaries, direction=direction)
+        try:
+            parsed, usage, dt = self._chat_call_raw(prompt, max_tokens=650)
+            normalized = normalize_batch_triage_payload(parsed)
+            candidates = [TriageCandidate(**c) for c in normalized["ranked_candidates"]]
+            return BatchTriageResult(
+                ranked_candidates=candidates,
+                selected_finalists=normalized["selected_finalists"],
+                raw_response=json.dumps(parsed),
+                is_valid=True,
+                usage=usage,
+                latency_ms=dt
+            )
+        except Exception as exc:
+            return BatchTriageResult(
+                ranked_candidates=[],
+                selected_finalists=[],
+                error_message=f"batch_triage_error: {str(exc)}",
+                is_valid=False,
+                latency_ms=0.0
+            )
 
     def evaluate_adversarial(self, candidate_payload: Dict[str, Any]) -> AIEvaluationResult:
         symbol = str(candidate_payload.get("symbol", "UNKNOWN"))

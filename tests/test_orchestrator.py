@@ -45,6 +45,12 @@ def test_preflight_leverage_assertion_before_order(mocker):
         setup_type="PUMP_EXHAUSTION",
         is_valid=True
     ))
+    from ai_evaluator import BatchTriageResult, TriageCandidate
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="1000PEPE-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85, triage_reason="Clear pump exhaustion")],
+        selected_finalists=["1000PEPE-USDT"],
+        is_valid=True
+    ))
 
     # Spy on order of calls between set_leverage and place_order
     mock_set_lev = mocker.patch.object(orch.client, "set_leverage", return_value={"leverage": 20})
@@ -83,6 +89,12 @@ def test_preflight_leverage_failure_aborts_order(mocker):
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.001, "atr_to_friction": 8.0})
     mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="DOGE-USDT", decision="ENTER_SHORT", confidence=85, is_valid=True
+    ))
+    from ai_evaluator import BatchTriageResult, TriageCandidate
+    mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
+        ranked_candidates=[TriageCandidate(symbol="DOGE-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85, triage_reason="Test")],
+        selected_finalists=["DOGE-USDT"],
+        is_valid=True
     ))
 
     # Simulate set_leverage failing with exchange API error
