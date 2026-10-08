@@ -202,6 +202,30 @@ def normalize_batch_triage_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SHORT") -> str:
+    symbol = candidate.get("symbol", "UNKNOWN")
+    dir_target = direction.upper()
+    return (
+        f"You are the Lead Quantitative Risk Arbiter for an automated perpetual futures strategy targeting {dir_target} setups.\n"
+        f"Perform a dual-thesis dialectical evaluation for this screened finalist before entry authorization.\n\n"
+        f"Candidate Detailed Setup:\n{json.dumps(candidate, separators=(',', ':'))}\n\n"
+        f"Evaluation Directives:\n"
+        f"1. Bull Thesis (Squeeze Defender): Identify buyer momentum, breakout risks, negative funding squeeze traps, or lack of clear rejection.\n"
+        f"2. Bear Thesis (Short Hunter): Identify buyer dry-up, upper wick rejections, volume divergence, or resistance breaks.\n"
+        f"3. Synthesis Decision:\n"
+        f"   - Authorize ENTER_{dir_target} ONLY if evidence shows clear exhaustion / structural edge with confidence >= 70.\n"
+        f"   - If setup is promising but needs further price action, return WAIT.\n"
+        f"   - If continuation or squeeze risk dominates, return SKIP.\n\n"
+        f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
+        f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "ENTER_LONG" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
+        f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "MOMENTUM_PULLBACK" | "NONE", '
+        f'"bull_thesis": "<squeeze defender argument>", '
+        f'"bear_thesis": "<short hunter argument>", '
+        f'"key_evidence": "<synthesized decisive reason>", '
+        f'"risk_factors": "<dominant risks>"}}'
+    )
+
+
 def build_adversarial_prompt(candidate: Dict[str, Any], role: str) -> str:
     symbol = candidate.get("symbol", "UNKNOWN")
     return (
@@ -336,6 +360,53 @@ class AIEvaluator:
                 error_message=f"batch_triage_error: {str(exc)}",
                 is_valid=False,
                 latency_ms=0.0
+            )
+
+    def evaluate_deep_candidate(
+        self,
+        candidate_payload: Dict[str, Any],
+        direction: str = "SHORT"
+    ) -> AIEvaluationResult:
+        """
+        Tier 2: Single structured deep call evaluating both Bull (Defender) and Bear (Hunter) theses
+        in a unified dialectic prompt. Replaces the 3-call adversarial loop with 1 comprehensive call.
+        """
+        symbol = str(candidate_payload.get("symbol", "UNKNOWN"))
+        prompt = build_structured_deep_prompt(candidate_payload, direction=direction)
+        try:
+            parsed, usage, dt = self._chat_call_raw(prompt, max_tokens=450)
+            normalized = normalize_ai_payload(parsed)
+            decision = normalized["decision"]
+            confidence = int(normalized.get("confidence", 0))
+            if decision in ("ENTER_SHORT", "ENTER_LONG") and confidence < 70:
+                decision = "WAIT"
+
+            evidence = normalized.get("key_evidence", "")
+            bull_t = parsed.get("bull_thesis", "")
+            bear_t = parsed.get("bear_thesis", "")
+            if bull_t or bear_t:
+                evidence = f"[Dual-Thesis] Bear: {bear_t} | Bull: {bull_t} => {evidence}"
+
+            return AIEvaluationResult(
+                symbol=symbol,
+                decision=decision,
+                confidence=confidence,
+                setup_type=str(normalized.get("setup_type", "NONE")),
+                key_evidence=evidence[:400],
+                risk_factors=str(normalized.get("risk_factors", "")),
+                raw_response=json.dumps(parsed),
+                is_valid=True,
+                usage=usage,
+                latency_ms=dt,
+            )
+        except Exception as exc:
+            return AIEvaluationResult(
+                symbol=symbol,
+                decision="SKIP",
+                confidence=0,
+                error_message=f"deep_eval_error: {str(exc)}",
+                is_valid=False,
+                latency_ms=0.0,
             )
 
     def evaluate_adversarial(self, candidate_payload: Dict[str, Any]) -> AIEvaluationResult:

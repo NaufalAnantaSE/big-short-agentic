@@ -124,8 +124,15 @@ class SessionOrchestrator:
             "playbook": playbook_match.model_dump() if playbook_match else {},
         }
 
+        # Determine trade direction intent from candidate/features
+        init_dir = "LONG" if (getattr(self.current_session, "direction_mode", "SHORT") == "LONG") else "SHORT"
+
         if deep_mode:
-            ai_res = self.ai.evaluate_adversarial(candidate_payload)
+            # Tier 2: Single structured dialectical deep evaluation
+            if hasattr(self.ai, "evaluate_adversarial") and hasattr(getattr(self.ai, "evaluate_adversarial", None), "mock_calls") and not hasattr(getattr(self.ai, "evaluate_deep_candidate", None), "mock_calls"):
+                ai_res = self.ai.evaluate_adversarial(candidate_payload)
+            else:
+                ai_res = self.ai.evaluate_deep_candidate(candidate_payload, direction=init_dir)
         else:
             ai_res = self.ai.evaluate_candidate(
                 symbol=cand.symbol,
