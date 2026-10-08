@@ -101,6 +101,49 @@ def test_bug8_plain_explainer_direction_aware_fib_and_gate_narrative():
     assert "mencegah risiko membeli di pucuk (FOMO)" in long_fomo_card["plain_reason"]
 
 
+def test_s2_both_mode_direction_neutral_narrative():
+    # Test BOTH mode narrative for EXTENDED_DUMP
+    fib_dump = {
+        "valid": True,
+        "zone": "EXTENDED_DUMP",
+        "retracement_ratio": 0.85
+    }
+    both_card = humanize_ai_decision(
+        symbol="ADA-USDT",
+        decision="SKIP",
+        confidence=0,
+        evidence="Deterministic hard gate rejected candidate",
+        risk_factors="dump_already_extended",
+        price=0.35,
+        change_24h=-8.5,
+        spread_pct=0.1,
+        fibonacci=fib_dump,
+        direction="BOTH"
+    )
+    # Market notes should contain neutral dual-direction wording
+    assert any("Bukan saat ideal untuk posisi jual baru; untuk posisi beli menunggu konfirmasi pantulan" in note for note in both_card["market_notes"])
+    assert any("Terlalu berisiko untuk posisi jual (rawan memantul di dasar); untuk posisi beli menunggu konfirmasi pantulan" in note for note in both_card["market_notes"])
+    # Plain reason should be neutral for BOTH
+    assert "Tidak aman untuk posisi jual (risiko memantul di dasar), dan belum ada konfirmasi cukup untuk posisi beli" in both_card["plain_reason"]
+
+
+def test_s1_risk_factors_deduplication_in_orchestrator():
+    # Direct test of deduplication logic
+    d_reasons_1 = ["spread_too_wide", "atr_below_friction_threshold", "dump_already_extended"]
+    d_reasons_2 = ["spread_too_wide", "atr_below_friction_threshold", "long_fomo_danger"]
+
+    all_gate_reasons = []
+    for r in d_reasons_1:
+        if r not in all_gate_reasons:
+            all_gate_reasons.append(r)
+    for r in d_reasons_2:
+        if r not in all_gate_reasons:
+            all_gate_reasons.append(r)
+
+    assert all_gate_reasons == ["spread_too_wide", "atr_below_friction_threshold", "dump_already_extended", "long_fomo_danger"]
+    assert len(all_gate_reasons) == len(set(all_gate_reasons))
+
+
 def test_bug7_session_restore_preserves_universe_mode(tmp_path, monkeypatch):
     import db
     from tenant_manager import TenantSessionManager

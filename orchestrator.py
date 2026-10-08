@@ -651,7 +651,12 @@ class SessionOrchestrator:
                 if d_ok:
                     cand_allowed_dirs.append(d)
                 else:
-                    all_gate_reasons.extend(d_reasons)
+                    # Deduplicate while preserving order: universal reasons
+                    # (e.g. spread_too_wide) repeat in every direction's
+                    # evaluation and must not be displayed twice.
+                    for r in d_reasons:
+                        if r not in all_gate_reasons:
+                            all_gate_reasons.append(r)
 
             if not cand_allowed_dirs:
                 cycle_results.append({

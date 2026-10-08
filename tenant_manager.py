@@ -644,12 +644,16 @@ class TenantSessionManager:
             ema_data = mf.get("ema_trend")
             playbook_data = ev.get("playbook")
 
-            cand_dir = (
+            session_dir = orch.current_session.direction_mode if orch.current_session else "SHORT"
+            raw_dir = (
                 ev.get("direction")
                 or ev.get("suggested_direction")
                 or (playbook_data.get("direction") if isinstance(playbook_data, dict) else None)
-                or (orch.current_session.direction_mode if orch.current_session and orch.current_session.direction_mode in ("LONG", "SHORT") else "SHORT")
+                or session_dir
             )
+            # Never force BOTH-mode candidates into a SHORT narrative: pass BOTH
+            # through so the explainer can use direction-neutral wording.
+            cand_dir = str(raw_dir).upper() if str(raw_dir).upper() in ("LONG", "SHORT", "BOTH") else session_dir
 
             h = humanize_ai_decision(
                 symbol=ev.get("symbol", ""),
