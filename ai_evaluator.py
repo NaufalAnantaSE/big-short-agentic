@@ -5,7 +5,7 @@ import json
 import time
 import httpx
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from config import AppConfig
 
@@ -106,9 +106,51 @@ def build_snapshot_prompt(candidates: list[Dict[str, Any]]) -> str:
     return "Return strict JSON. Evaluate short thesis versus squeeze risk using funding_rate, open interest, depth and multi-timeframe data. " + json.dumps(candidates, separators=(",", ":"))
 
 
+def compact_candidate_summary(cand: Dict[str, Any], default_direction: str = "SHORT") -> Dict[str, Any]:
+    if not isinstance(cand, dict):
+        return {}
+    sym = str(cand.get("symbol", "")).strip().upper()
+    allowed_dirs = cand.get("allowed_directions")
+    if not allowed_dirs:
+        dir_upper = default_direction.upper()
+        allowed_dirs = [dir_upper] if dir_upper in ("LONG", "SHORT") else ["LONG", "SHORT"]
+
+    essential_keys = (
+        "current_price",
+        "price_change_24h",
+        "spread_pct",
+        "atr_pct",
+        "rsi_15m",
+        "funding_rate",
+        "volume_sma_ratio",
+        "fib_zone",
+        "playbook_matched",
+        "price",
+        "change_24h",
+        "rsi",
+        "vol_ratio",
+        "funding",
+        "playbook",
+    )
+    compacted: Dict[str, Any] = {
+        "symbol": sym,
+        "allowed_directions": allowed_dirs,
+    }
+    for k in essential_keys:
+        if k in cand and cand[k] is not None:
+            compacted[k] = cand[k]
+
+    return compacted
+
+
 def build_batch_triage_prompt(candidate_summaries: list[Dict[str, Any]], direction: str = "SHORT") -> str:
     direction_upper = direction.upper()
     strategy_target = f"{direction_upper} setups" if direction_upper != "BOTH" else "BOTH (evaluating both LONG and SHORT setups)"
+    compact_candidates = [
+        compact_candidate_summary(c, default_direction=direction)
+        for c in candidate_summaries
+        if isinstance(c, dict) and c.get("symbol")
+    ]
     return (
         f"You are an institutional crypto quantitative analyst performing rapid comparative triage across multiple screened candidates.\n"
         f"Strategy Target: {strategy_target} among recently pumped or volatile tokens.\n\n"
@@ -116,7 +158,10 @@ def build_batch_triage_prompt(candidate_summaries: list[Dict[str, Any]], directi
         f"- DEEP_ANALYZE: Strongest immediate setups showing top exhaustion, buyer dry-up, or clean breakdown/bounce. (Cap: select at most 2 finalists).\n"
         f"- WATCH: High-quality setup that is currently premature (e.g. still ascending into resistance or basing into support, needs further reversal/wick confirmation before entry).\n"
         f"- SKIP: Weak setup, high squeeze danger, low volume, or poor risk:reward.\n\n"
-        f"Screened Candidates:\n{json.dumps(candidate_summaries, separators=(',', ':'))}\n\n"
+        f"Rules:\n"
+        f"1. suggested_direction MUST be one of candidate's allowed_directions (UNKNOWN is permitted ONLY for SKIP).\n"
+        f"2. selected_finalists must contain at most 2 candidates (Cap 2) and each finalist MUST have action DEEP_ANALYZE.\n\n"
+        f"Screened Candidates:\n{json.dumps(compact_candidates, separators=(',', ':'))}\n\n"
         f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
         f'{{"ranked_candidates": [{{"symbol": "<symbol>", "rank": 1, "action": "DEEP_ANALYZE" | "WATCH" | "SKIP", '
         f'"suggested_direction": "LONG" | "SHORT" | "UNKNOWN", '
@@ -211,6 +256,70 @@ def normalize_batch_triage_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def validate_batch_triage_payload(
+    candidate_summaries: list[Dict[str, Any]],
+    normalized: Dict[str, Any],
+    direction: str = "SHORT"
+) -> tuple[bool, Optional[str]]:
+    """
+    Validates normalized batch triage payload against input candidate summaries:
+    - Empty response to nonempty input fails closed.
+    - Unknown symbols (not present in candidate_summaries) fail closed.
+    - Duplicate symbols in ranked_candidates or selected_finalists fail closed.
+    - Finalists not correctly ranked DEEP_ANALYZE fail closed.
+    - Disallowed directions fail closed (UNKNOWN permitted only for SKIP).
+    """
+    ranked = normalized.get("ranked_candidates", [])
+    if candidate_summaries and not ranked:
+        return False, "Malformed empty triage response for nonempty candidate input"
+
+    cand_map: Dict[str, list[str]] = {}
+    default_allowed = [direction.upper()] if direction.upper() in ("LONG", "SHORT") else ["LONG", "SHORT"]
+    for c in candidate_summaries:
+        if isinstance(c, dict):
+            sym = str(c.get("symbol", "")).strip().upper()
+            if sym:
+                dirs = c.get("allowed_directions") or default_allowed
+                cand_map[sym] = [str(d).strip().upper() for d in dirs]
+
+    seen_symbols = set()
+    symbol_to_action: Dict[str, str] = {}
+    for cand in ranked:
+        sym = cand.get("symbol", "")
+        if sym not in cand_map:
+            return False, f"Unknown symbol in triage response: {sym}"
+        if sym in seen_symbols:
+            return False, f"Duplicate symbol in triage response: {sym}"
+        seen_symbols.add(sym)
+        act = cand.get("action", "SKIP")
+        symbol_to_action[sym] = act
+
+        sugg_dir = str(cand.get("suggested_direction", "UNKNOWN")).strip().upper()
+        allowed = cand_map[sym]
+        if act == "SKIP":
+            if sugg_dir != "UNKNOWN" and sugg_dir not in allowed:
+                return False, f"Disallowed direction {sugg_dir} for SKIP symbol {sym} (allowed: {allowed})"
+        else:
+            if sugg_dir not in allowed:
+                return False, f"Disallowed direction {sugg_dir} for {act} symbol {sym} (allowed: {allowed})"
+
+    finalists = normalized.get("selected_finalists", [])
+    seen_finalists = set()
+    for f in finalists:
+        fsym = str(f).strip().upper()
+        if fsym not in cand_map:
+            return False, f"Unknown symbol in selected_finalists: {fsym}"
+        if fsym in seen_finalists:
+            return False, f"Duplicate symbol in selected_finalists: {fsym}"
+        seen_finalists.add(fsym)
+
+        act = symbol_to_action.get(fsym)
+        if act != "DEEP_ANALYZE":
+            return False, f"Finalist {fsym} is not correctly ranked DEEP_ANALYZE (action: {act})"
+
+    return True, None
+
+
 def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SHORT") -> str:
     symbol = candidate.get("symbol", "UNKNOWN")
     dir_target = direction.upper()
@@ -265,6 +374,19 @@ class BatchTriageResult(BaseModel):
     error_message: str = ""
     usage: Dict[str, Any] = Field(default_factory=dict)
     latency_ms: float = 0.0
+    error_type: Optional[str] = None
+    attempts: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_attempt_alias(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "attempt" in values and "attempts" not in values:
+            values["attempts"] = values.pop("attempt")
+        return values
+
+    @property
+    def attempt(self) -> int:
+        return self.attempts
 
 
 class AIEvaluationResult(BaseModel):
@@ -290,7 +412,8 @@ class AIEvaluator:
         self,
         prompt: str,
         system_prompt: str = "You are a quantitative trading risk engine. Always output pure valid JSON.",
-        max_tokens: int = 650
+        max_tokens: int = 650,
+        timeout: Optional[Any] = None,
     ) -> tuple[Dict[str, Any], Dict[str, Any], float]:
         payload = {
             "model": self.config.ai_model_name,
@@ -303,7 +426,10 @@ class AIEvaluator:
             "stream": False
         }
         t0 = time.perf_counter()
-        resp = self.client.post(self.url, json=payload)
+        post_kwargs: Dict[str, Any] = {"json": payload}
+        if timeout is not None:
+            post_kwargs["timeout"] = timeout
+        resp = self.client.post(self.url, **post_kwargs)
         dt = (time.perf_counter() - t0) * 1000
         if resp.status_code != 200:
             raise ValueError(f"HTTP {resp.status_code}: {resp.text}")
@@ -352,9 +478,24 @@ class AIEvaluator:
             )
 
         prompt = build_batch_triage_prompt(candidate_summaries, direction=direction)
+        batch_timeout = httpx.Timeout(60.0, connect=10.0, read=60.0)
+        t0 = time.perf_counter()
         try:
-            parsed, usage, dt = self._chat_call_raw(prompt, max_tokens=650)
+            parsed, usage, dt = self._chat_call_raw(prompt, max_tokens=650, timeout=batch_timeout)
             normalized = normalize_batch_triage_payload(parsed)
+            is_valid, val_err = validate_batch_triage_payload(candidate_summaries, normalized, direction=direction)
+            if not is_valid:
+                return BatchTriageResult(
+                    ranked_candidates=[],
+                    selected_finalists=[],
+                    raw_response=json.dumps(parsed),
+                    is_valid=False,
+                    error_message=f"batch_triage_validation_error: {val_err}",
+                    error_type="VALIDATION_ERROR",
+                    usage=usage,
+                    latency_ms=dt,
+                    attempts=1
+                )
             candidates = [TriageCandidate(**c) for c in normalized["ranked_candidates"]]
             return BatchTriageResult(
                 ranked_candidates=candidates,
@@ -362,15 +503,60 @@ class AIEvaluator:
                 raw_response=json.dumps(parsed),
                 is_valid=True,
                 usage=usage,
-                latency_ms=dt
+                latency_ms=dt,
+                attempts=1,
+                error_type=None
             )
-        except Exception as exc:
+        except httpx.ConnectTimeout as exc:
+            dt = (time.perf_counter() - t0) * 1000
             return BatchTriageResult(
                 ranked_candidates=[],
                 selected_finalists=[],
-                error_message=f"batch_triage_error: {str(exc)}",
+                error_message=f"batch_triage_error: Connect timeout ({str(exc)})",
+                error_type="CONNECT_TIMEOUT",
                 is_valid=False,
-                latency_ms=0.0
+                latency_ms=dt,
+                attempts=1
+            )
+        except httpx.ReadTimeout as exc:
+            dt = (time.perf_counter() - t0) * 1000
+            return BatchTriageResult(
+                ranked_candidates=[],
+                selected_finalists=[],
+                error_message=f"batch_triage_error: Read timeout ({str(exc)})",
+                error_type="READ_TIMEOUT",
+                is_valid=False,
+                latency_ms=dt,
+                attempts=1
+            )
+        except httpx.TimeoutException as exc:
+            dt = (time.perf_counter() - t0) * 1000
+            return BatchTriageResult(
+                ranked_candidates=[],
+                selected_finalists=[],
+                error_message=f"batch_triage_error: Request timed out ({str(exc)})",
+                error_type="TIMEOUT",
+                is_valid=False,
+                latency_ms=dt,
+                attempts=1
+            )
+        except Exception as exc:
+            dt = (time.perf_counter() - t0) * 1000
+            err_str = str(exc)
+            if "HTTP " in err_str:
+                err_type = "HTTP_ERROR"
+            elif isinstance(exc, (json.JSONDecodeError, ValueError)) and ("Could not parse" in err_str or "JSON" in err_str):
+                err_type = "PARSE_ERROR"
+            else:
+                err_type = "API_ERROR"
+            return BatchTriageResult(
+                ranked_candidates=[],
+                selected_finalists=[],
+                error_message=f"batch_triage_error: {err_str}",
+                error_type=err_type,
+                is_valid=False,
+                latency_ms=dt,
+                attempts=1
             )
 
     def evaluate_deep_candidate(

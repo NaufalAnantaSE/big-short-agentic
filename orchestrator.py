@@ -201,7 +201,7 @@ class SessionOrchestrator:
         else:
             pos_dir = "UNKNOWN"
 
-        target_rr = playbook_match.recommended_rr if playbook_match and playbook_match.recommended_rr else 2.0
+        target_rr = max(2.0, float(playbook_match.recommended_rr if playbook_match and playbook_match.recommended_rr else 2.0))
         current_lev = self.current_session.leverage if self.current_session else 20
         effective_target_lev = current_lev
         if atr_val and cand.last_price > 0:
@@ -737,18 +737,60 @@ class SessionOrchestrator:
             }
 
         # Step 2: Tier 1 Batch Triage via 9Router
+        # Cap batch to top 4 candidates for fast LLM inference (< 25s) and timeout protection.
+        # In BOTH mode, balance candidates symmetrically across LONG and SHORT.
+        triage_batch: list[Dict[str, Any]] = []
+        if len(screened_candidates) <= 4:
+            triage_batch = screened_candidates
+        elif current_dir == "BOTH":
+            def _get_target_dir(sc_item):
+                pm = sc_item.get("playbook_match")
+                if pm and hasattr(pm, "direction") and pm.direction in ("LONG", "SHORT"):
+                    return pm.direction
+                dirs = sc_item.get("allowed_directions", [])
+                if "LONG" in dirs and "SHORT" not in dirs:
+                    return "LONG"
+                if "SHORT" in dirs and "LONG" not in dirs:
+                    return "SHORT"
+                return "LONG" if sc_item["cand"].price_change_percent < 5.0 else "SHORT"
+
+            long_cands = [sc for sc in screened_candidates if _get_target_dir(sc) == "LONG"]
+            short_cands = [sc for sc in screened_candidates if _get_target_dir(sc) == "SHORT"]
+            long_cands.sort(key=lambda x: getattr(x.get("playbook_match"), "score", 0) if x.get("playbook_match") else 0, reverse=True)
+            short_cands.sort(key=lambda x: getattr(x.get("playbook_match"), "score", 0) if x.get("playbook_match") else 0, reverse=True)
+
+            selected_syms = set()
+            for sc in long_cands[:2]:
+                triage_batch.append(sc)
+                selected_syms.add(sc["cand"].symbol)
+            for sc in short_cands[:2]:
+                if sc["cand"].symbol not in selected_syms:
+                    triage_batch.append(sc)
+                    selected_syms.add(sc["cand"].symbol)
+            if len(triage_batch) < 4:
+                for sc in screened_candidates:
+                    if sc["cand"].symbol not in selected_syms:
+                        triage_batch.append(sc)
+                        selected_syms.add(sc["cand"].symbol)
+                        if len(triage_batch) >= 4:
+                            break
+        else:
+            triage_batch = screened_candidates[:4]
+
         triage_res = self.ai.evaluate_batch_triage(
-            [sc["summary"] for sc in screened_candidates],
+            [sc["summary"] for sc in triage_batch],
             direction=current_dir
         )
 
         AuditLogger.log_event("AI_BATCH_TRIAGE", {
-            "candidates_count": len(screened_candidates),
+            "candidates_count": len(triage_batch),
             "is_valid": triage_res.is_valid,
             "ranked": [c.model_dump() for c in triage_res.ranked_candidates],
             "selected_finalists": triage_res.selected_finalists,
             "latency_ms": triage_res.latency_ms,
-            "usage": triage_res.usage
+            "usage": triage_res.usage,
+            "error_type": getattr(triage_res, "error_type", None),
+            "attempts": getattr(triage_res, "attempts", 1),
         }, session_id=self.current_session.session_id)
 
         candidate_map = {sc["cand"].symbol: sc for sc in screened_candidates}
@@ -819,7 +861,7 @@ class SessionOrchestrator:
 
                     if t_cand.conviction_score >= 70:
                         atr_v = sc["atr_val"]
-                        target_rr = sc["playbook_match"].recommended_rr if sc["playbook_match"] and sc["playbook_match"].recommended_rr else 2.0
+                        target_rr = max(2.0, float(sc["playbook_match"].recommended_rr if sc["playbook_match"] and sc["playbook_match"].recommended_rr else 2.0))
 
                         # Smart Adaptive Leverage for WATCH candidate (ATR-capped to avoid liquidation guard reject)
                         effective_target_lev = self.current_session.leverage
@@ -934,10 +976,13 @@ class SessionOrchestrator:
             # Fallback mode: evaluate top 2 candidates sequentially if triage failed
             AuditLogger.log_event("AI_BATCH_TRIAGE_FALLBACK", {
                 "error": triage_res.error_message,
-                "candidates_count": len(screened_candidates)
+                "error_type": getattr(triage_res, "error_type", None),
+                "candidates_count": len(triage_batch),
+                "latency_ms": triage_res.latency_ms,
+                "attempts": getattr(triage_res, "attempts", 1),
             }, session_id=self.current_session.session_id)
 
-            for sc in screened_candidates[:2]:
+            for sc in triage_batch[:2]:
                 if self.current_session.filled_count >= self.current_session.quota:
                     self.current_session.status = "EXHAUSTED"
                     break
@@ -952,7 +997,7 @@ class SessionOrchestrator:
 
                 rep, tok, placed = self._evaluate_and_execute_candidate(
                     sc=sc,
-                    deep_mode=False,
+                    deep_mode=True,  # Tier 2 structured dual-thesis evaluation for fallback finalists
                     effective_dry_run=effective_dry_run,
                     is_local_paper=is_local_paper
                 )

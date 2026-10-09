@@ -1,6 +1,6 @@
 """Deterministic lot sizing calculator using Python Decimal arithmetic."""
 
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP, InvalidOperation
 from typing import Dict, Any, Tuple, Optional
 from pydantic import BaseModel
 
@@ -21,18 +21,35 @@ class SizingResult(BaseModel):
     potential_profit_usdt: float = 0.0
     sl_percent: float = 0.0
     tp_percent: float = 0.0
-    # Real risk expressed as % of margin: sl_pct * leverage. If this exceeds
-    # the margin (minus a maintenance buffer), the position is liquidated
-    # BEFORE the stop-loss can trigger.
+    # Real risk expressed as % of margin: sl_pct * leverage.
+    # Conservative single-position heuristic / risk filter; note this is not
+    # guaranteed cross-margin liquidation protection since exchange liquidation
+    # depends on total account equity, maintenance margin tiers, and mark slippage.
     risk_pct_of_margin: float = 0.0
 
-# Maximum allowed risk as % of margin. The 80% ceiling (not 100%) leaves a
-# buffer for maintenance margin / mark-price deviation so the stop-loss has
-# room to trigger before liquidation.
+# Maximum allowed risk as % of margin. The 80% ceiling (not 100%) provides a
+# conservative buffer for maintenance margin and mark-price deviation.
+# Note: this is a local sizing heuristic, not guaranteed exchange liquidation protection.
 MAX_RISK_PCT_OF_MARGIN = 80.0
+
+# Minimum allowed Risk:Reward ratio guardrail
+MIN_TARGET_RR = Decimal("2.0")
 
 class SizingError(Exception):
     pass
+
+def _validate_target_rr(target_rr: Any) -> Decimal:
+    """Validates that target_rr is a finite numeric value >= 2.0."""
+    if target_rr is None or isinstance(target_rr, bool):
+        raise ValueError(f"Invalid target_rr: {target_rr}. Must be a finite number >= 2.0.")
+    try:
+        d_rr = Decimal(str(target_rr))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError(f"Invalid target_rr: {target_rr}. Must be a finite number >= 2.0.")
+
+    if not d_rr.is_finite() or d_rr < MIN_TARGET_RR:
+        raise ValueError(f"Invalid target_rr: {target_rr}. Must be a finite number >= 2.0.")
+    return d_rr
 
 class SizingCalculator:
     @staticmethod
@@ -51,47 +68,75 @@ class SizingCalculator:
         Calculates dynamic Stop-Loss and Take-Profit prices quantized to contract pricePrecision.
         Returns:
             (sl_price, tp_price, actual_sl_pct, actual_tp_pct)
+        Raises:
+            ValueError: If target_rr is invalid/nonfinite/<2.0, direction is invalid,
+                        or calculated prices are non-positive / incorrectly oriented.
         """
         if entry_price <= 0:
             return 0.0, 0.0, 0.0, 0.0
 
         dir_norm = direction.upper()
-        if atr is not None and atr > 0:
-            atr_pct = (atr * atr_multiplier_sl / entry_price) * 100.0
-            clamped_sl_pct = max(min_sl_pct, min(max_sl_pct, atr_pct))
-        else:
-            clamped_sl_pct = 3.0
+        if dir_norm not in ("LONG", "SHORT"):
+            raise ValueError(f"Invalid direction: {direction}. Must be 'LONG' or 'SHORT'.")
 
-        tp_pct_target = clamped_sl_pct * max(1.0, target_rr)
+        d_rr = _validate_target_rr(target_rr)
+        d_entry = Decimal(str(entry_price))
+
+        d_min_sl = Decimal(str(min_sl_pct))
+        d_max_sl = Decimal(str(max_sl_pct))
+        if atr is not None and atr > 0:
+            d_atr = Decimal(str(atr))
+            d_mult = Decimal(str(atr_multiplier_sl))
+            atr_pct = (d_atr * d_mult / d_entry) * Decimal("100")
+            clamped_sl_pct = max(d_min_sl, min(d_max_sl, atr_pct))
+        else:
+            clamped_sl_pct = max(d_min_sl, min(d_max_sl, Decimal("3.0")))
+
+        tp_pct_target = clamped_sl_pct * d_rr
 
         if dir_norm == "LONG":
-            raw_sl = entry_price * (1.0 - (clamped_sl_pct / 100.0))
-            raw_tp = entry_price * (1.0 + (tp_pct_target / 100.0))
-            if raw_sl <= 0:
-                raw_sl = entry_price * 0.95
+            raw_sl = d_entry * (Decimal("1") - (clamped_sl_pct / Decimal("100")))
+            raw_tp = d_entry * (Decimal("1") + (tp_pct_target / Decimal("100")))
         else:  # SHORT
-            raw_sl = entry_price * (1.0 + (clamped_sl_pct / 100.0))
-            raw_tp = entry_price * (1.0 - (tp_pct_target / 100.0))
-            if raw_tp <= 0:
-                raw_tp = entry_price * 0.90
+            raw_sl = d_entry * (Decimal("1") + (clamped_sl_pct / Decimal("100")))
+            raw_tp = d_entry * (Decimal("1") - (tp_pct_target / Decimal("100")))
+
+        # Fail closed on non-positive raw SL/TP rather than silently stretching target
+        if raw_sl <= Decimal("0") or raw_tp <= Decimal("0"):
+            raise ValueError(
+                f"Calculated raw SL ({raw_sl}) or TP ({raw_tp}) is non-positive for entry {entry_price}. "
+                f"Sizing rejected."
+            )
 
         price_precision = int(contract_info.get("pricePrecision", 4))
         p_step = Decimal("10") ** (-price_precision) if price_precision > 0 else Decimal("1")
 
-        d_sl = Decimal(str(raw_sl)).quantize(p_step, rounding=ROUND_HALF_UP)
-        d_tp = Decimal(str(raw_tp)).quantize(p_step, rounding=ROUND_HALF_UP)
+        d_sl = raw_sl.quantize(p_step, rounding=ROUND_HALF_UP)
+        d_tp = raw_tp.quantize(p_step, rounding=ROUND_HALF_UP)
 
         sl_price = float(d_sl)
         tp_price = float(d_tp)
 
-        if dir_norm == "LONG":
-            act_sl_pct = abs((entry_price - sl_price) / entry_price) * 100.0
-            act_tp_pct = abs((tp_price - entry_price) / entry_price) * 100.0
-        else:
-            act_sl_pct = abs((sl_price - entry_price) / entry_price) * 100.0
-            act_tp_pct = abs((entry_price - tp_price) / entry_price) * 100.0
+        # Validate positivity and orientation after quantization
+        if d_sl <= Decimal("0") or d_tp <= Decimal("0"):
+            raise ValueError(f"Quantized SL ({d_sl}) or TP ({d_tp}) is non-positive.")
 
-        return sl_price, tp_price, round(act_sl_pct, 2), round(act_tp_pct, 2)
+        if dir_norm == "LONG":
+            if not (d_sl < d_entry < d_tp):
+                raise ValueError(
+                    f"Quantized SL/TP prices ({d_sl}, {d_tp}) incorrectly oriented for LONG at entry {d_entry}."
+                )
+            act_sl_pct = abs((d_entry - d_sl) / d_entry) * Decimal("100")
+            act_tp_pct = abs((d_tp - d_entry) / d_entry) * Decimal("100")
+        else:  # SHORT
+            if not (d_tp < d_entry < d_sl):
+                raise ValueError(
+                    f"Quantized SL/TP prices ({d_sl}, {d_tp}) incorrectly oriented for SHORT at entry {d_entry}."
+                )
+            act_sl_pct = abs((d_sl - d_entry) / d_entry) * Decimal("100")
+            act_tp_pct = abs((d_entry - d_tp) / d_entry) * Decimal("100")
+
+        return sl_price, tp_price, round(float(act_sl_pct), 2), round(float(act_tp_pct), 2)
 
     @staticmethod
     def calculate_lot(
@@ -138,8 +183,35 @@ class SizingCalculator:
                 rejection_reason="Price must be strictly positive (> 0)."
             )
 
+        # Validate target_rr upfront
+        try:
+            d_target_rr = _validate_target_rr(target_rr)
+        except ValueError as e:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"Invalid target_rr: {target_rr}. Must be a finite number >= 2.0."
+            )
+
         # Exchange contract rules
         dir_norm = direction.upper()
+        if dir_norm not in ("LONG", "SHORT"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"Invalid direction: {direction}. Must be 'LONG' or 'SHORT'."
+            )
+
         qty_precision = int(contract_info.get("quantityPrecision", 0))
         trade_min_qty = Decimal(str(contract_info.get("tradeMinQuantity", "0.0001")))
         trade_min_usdt = Decimal(str(contract_info.get("tradeMinUSDT", "5.0")))
@@ -187,23 +259,107 @@ class SizingCalculator:
                 rejection_reason=f"Effective notional {actual_notional:.2f} USDT is below tradeMinUSDT ({trade_min_usdt} USDT)."
             )
 
-        sl_price, tp_price, sl_pct, tp_pct = SizingCalculator.calculate_dynamic_tpsl(
-            symbol=symbol,
-            direction=direction,
-            entry_price=current_price,
-            contract_info=contract_info,
-            atr=atr,
-            atr_multiplier_sl=atr_multiplier_sl,
-            target_rr=target_rr
-        )
+        try:
+            sl_price, tp_price, sl_pct, tp_pct = SizingCalculator.calculate_dynamic_tpsl(
+                symbol=symbol,
+                direction=direction,
+                entry_price=current_price,
+                contract_info=contract_info,
+                atr=atr,
+                atr_multiplier_sl=atr_multiplier_sl,
+                target_rr=float(d_target_rr)
+            )
+        except ValueError as e:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=f"TP/SL calculation failed: {str(e)}",
+                risk_reward_ratio=float(d_target_rr),
+            )
 
+        d_sl = Decimal(str(sl_price))
+        d_tp = Decimal(str(tp_price))
+
+        if d_sl <= Decimal("0") or d_tp <= Decimal("0"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason="Quantized SL/TP prices must be strictly positive (> 0).",
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+                risk_reward_ratio=float(d_target_rr),
+                sl_percent=sl_pct,
+                tp_percent=tp_pct,
+            )
+
+        if dir_norm == "LONG":
+            d_sl_dist = d_price - d_sl
+            d_tp_dist = d_tp - d_price
+            oriented = (d_sl < d_price < d_tp)
+        else:  # SHORT
+            d_sl_dist = d_sl - d_price
+            d_tp_dist = d_price - d_tp
+            oriented = (d_tp < d_price < d_sl)
+
+        if not oriented or d_sl_dist <= Decimal("0") or d_tp_dist <= Decimal("0"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=f"Incorrectly oriented quantized SL/TP (SL: {sl_price}, TP: {tp_price}, entry: {current_price}) for {dir_norm}.",
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+                risk_reward_ratio=float(d_target_rr),
+                sl_percent=sl_pct,
+                tp_percent=tp_pct,
+            )
+
+        effective_rr = d_tp_dist / d_sl_dist
         risk_usdt = float(actual_notional) * (sl_pct / 100.0)
         profit_usdt = float(actual_notional) * (tp_pct / 100.0)
 
-        # Liquidation guard: real risk = margin x leverage x sl_pct. If this
-        # exceeds the margin (minus buffer), the position is liquidated BEFORE
-        # the stop-loss triggers, making the TP/SL risk model meaningless.
-        # Fail closed: reject the setup with an actionable reason.
+        # Quantization guard: ensure quote-time effective RR >= 2.0.
+        # Reject setup if quantization eroded RR below 2.0; do not widen TP just for profit.
+        if effective_rr < MIN_TARGET_RR:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=margin_usdt,
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=(
+                    f"Effective R:R {effective_rr:.4f} is below minimum 2.0 guardrail due to price quantization "
+                    f"(SL: {sl_price}, TP: {tp_price}, entry: {current_price}). Widening TP is disallowed."
+                ),
+                stop_loss_price=sl_price,
+                take_profit_price=tp_price,
+                risk_reward_ratio=round(float(effective_rr), 4),
+                risk_amount_usdt=round(risk_usdt, 2),
+                potential_profit_usdt=round(profit_usdt, 2),
+                sl_percent=sl_pct,
+                tp_percent=tp_pct,
+            )
+
+        # Liquidation guard: conservative single-position heuristic (margin x leverage x sl_pct).
+        # This acts as a pre-trade screening filter to reject setups where the stop-loss
+        # is too wide for the chosen leverage. It is not guaranteed exchange liquidation
+        # protection under cross-margin or extreme volatility.
         risk_pct_of_margin = round(sl_pct * effective_leverage, 2)
         if risk_pct_of_margin > MAX_RISK_PCT_OF_MARGIN:
             return SizingResult(
@@ -222,7 +378,7 @@ class SizingCalculator:
                 ),
                 stop_loss_price=sl_price,
                 take_profit_price=tp_price,
-                risk_reward_ratio=target_rr,
+                risk_reward_ratio=round(float(effective_rr), 4),
                 risk_amount_usdt=round(risk_usdt, 2),
                 potential_profit_usdt=round(profit_usdt, 2),
                 sl_percent=sl_pct,
@@ -241,7 +397,7 @@ class SizingCalculator:
             rejection_reason="",
             stop_loss_price=sl_price,
             take_profit_price=tp_price,
-            risk_reward_ratio=target_rr,
+            risk_reward_ratio=round(float(effective_rr), 4),
             risk_amount_usdt=round(risk_usdt, 2),
             potential_profit_usdt=round(profit_usdt, 2),
             sl_percent=sl_pct,
