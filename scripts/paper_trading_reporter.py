@@ -50,39 +50,40 @@ def analyze_audit_log(session_id: Optional[str] = None) -> Dict[str, Any]:
             event_type = entry.get("event_type")
             data = entry.get("data", {})
 
-            if event_type == "CYCLE_START" or event_type == "SESSION_CYCLE_EXECUTED":
+            if event_type in ("CYCLE_SUMMARY", "CYCLE_START", "SESSION_CYCLE_EXECUTED"):
                 cycles += 1
 
-            elif event_type == "AI_DECISION" or event_type == "EVALUATION":
+            elif event_type in ("AI_EVALUATION", "AI_DECISION", "EVALUATION"):
                 dec = data.get("decision") or data.get("ai_decision")
                 direction = data.get("direction") or data.get("suggested_direction")
                 if dec == "ENTER_LONG" or (dec == "ENTER" and direction == "LONG"):
                     decisions["ENTER_LONG"] += 1
                 elif dec == "ENTER_SHORT" or (dec == "ENTER" and direction == "SHORT"):
                     decisions["ENTER_SHORT"] += 1
-                elif dec == "WATCH":
+                elif dec in ("WATCH", "WAIT"):
                     decisions["WATCH"] += 1
                 else:
                     decisions["SKIP"] += 1
 
-            elif event_type == "WATCHLIST_ENTRY_ADDED":
+            elif event_type in ("WATCHLIST_ENTER", "WATCHLIST_ENTRY_ADDED"):
                 watchlist_entries.append({
                     "symbol": data.get("symbol"),
-                    "direction": data.get("direction"),
+                    "direction": data.get("direction") or data.get("playbook"),
                     "initial_price": data.get("initial_price"),
+                    "conviction": data.get("conviction_score"),
                     "timestamp": entry.get("timestamp")
                 })
 
-            elif event_type in ("HARD_GATE_VETO", "DIRECTION_VETO", "GATE_REJECTED"):
+            elif event_type in ("HARD_GATE_REJECT", "WATCHLIST_VETO", "WATCH_CANDIDATE_VETO", "TRADE_EXECUTION_VETO", "HARD_GATE_VETO", "DIRECTION_VETO"):
                 vetoes.append({
                     "symbol": data.get("symbol"),
                     "event": event_type,
-                    "reasons": data.get("reasons"),
-                    "direction": data.get("direction"),
+                    "reasons": data.get("reasons") or data.get("reason"),
+                    "direction": data.get("direction") or data.get("target_direction"),
                     "timestamp": entry.get("timestamp")
                 })
 
-            elif event_type in ("ORDER_EXECUTED", "ORDER_PLACED"):
+            elif event_type in ("ORDER_SUBMISSION", "ORDER_EXECUTED", "ORDER_PLACED"):
                 orders_executed.append({
                     "symbol": data.get("symbol"),
                     "side": data.get("side"),
