@@ -1,0 +1,902 @@
+[
+  {
+    "symbol": "ORBIO-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.37097440",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791576261000,
+    "tranId": "1791537317374547190_513_569105_PNL",
+    "tradeId": "1791537317374547190_513_569104"
+  },
+  {
+    "symbol": "ORBIO-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03198888",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791576261000,
+    "tranId": "1791537317374547190_513_569105_COMMISSION",
+    "tradeId": "1791537317374547190_513_569104"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00368451",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791576003000,
+    "tranId": "1791537317374547190_513_562351",
+    "tradeId": "1791537317374547190_513_562350"
+  },
+  {
+    "symbol": "KAIA-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03003788",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791575247000,
+    "tranId": "1791537317374547190_513_549995",
+    "tradeId": "1791537317374547190_513_549994"
+  },
+  {
+    "symbol": "BAT-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03495317",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791573709000,
+    "tranId": "1791537317374547190_513_540449",
+    "tradeId": "1791537317374547190_513_540448"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "6.18015950",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791573705000,
+    "tranId": "1791537317374547190_513_540409_PNL",
+    "tradeId": "1791537317374547190_513_540408"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02693279",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791573705000,
+    "tranId": "1791537317374547190_513_540409_COMMISSION",
+    "tradeId": "1791537317374547190_513_540408"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "8.67594000",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791571857000,
+    "tranId": "1791537317374547190_513_529047_PNL",
+    "tradeId": "1791537317374547190_513_529046"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02539381",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791571857000,
+    "tranId": "1791537317374547190_513_529047_COMMISSION",
+    "tradeId": "1791537317374547190_513_529046"
+  },
+  {
+    "symbol": "MUSEBOOK-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02992643",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791566959000,
+    "tranId": "1791537317374547190_513_493932",
+    "tradeId": "1791537317374547190_513_493931"
+  },
+  {
+    "symbol": "ORBIO-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03030339",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791566622000,
+    "tranId": "1791537317374547190_513_491087",
+    "tradeId": "1791537317374547190_513_491086"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02973178",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791565428000,
+    "tranId": "1791537317374547190_513_481469",
+    "tradeId": "1791537317374547190_513_481468"
+  },
+  {
+    "symbol": "JUP-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.49791100",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791562541000,
+    "tranId": "1791537317374547190_513_456736_PNL",
+    "tradeId": "1791537317374547190_513_456735"
+  },
+  {
+    "symbol": "JUP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.05171939",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791562541000,
+    "tranId": "1791537317374547190_513_456736_COMMISSION",
+    "tradeId": "1791537317374547190_513_456735"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00274097",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561639000,
+    "tranId": "1791537317374547190_513_414560",
+    "tradeId": "1791537317374547190_513_414559"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00371641",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_409961",
+    "tradeId": "1791537317374547190_513_409960"
+  },
+  {
+    "symbol": "DOGE-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00998858",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_407078",
+    "tradeId": "1791537317374547190_513_407073"
+  },
+  {
+    "symbol": "POL-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00166210",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_407060",
+    "tradeId": "1791537317374547190_513_407059"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00499996",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_407021",
+    "tradeId": "1791537317374547190_513_407020"
+  },
+  {
+    "symbol": "JUP-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00158572",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_406897",
+    "tradeId": "1791537317374547190_513_406896"
+  },
+  {
+    "symbol": "ZEC-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00987627",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791561637000,
+    "tranId": "1791537317374547190_513_405435",
+    "tradeId": "1791537317374547190_513_405434"
+  },
+  {
+    "symbol": "BATON-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-6.12821200",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791560474000,
+    "tranId": "1791537317374547190_513_227863_PNL",
+    "tradeId": "1791537317374547190_513_227862"
+  },
+  {
+    "symbol": "BATON-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03306615",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791560474000,
+    "tranId": "1791537317374547190_513_227863_COMMISSION",
+    "tradeId": "1791537317374547190_513_227862"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04989667",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791560471000,
+    "tranId": "1791537317374547190_513_227845",
+    "tradeId": "1791537317374547190_513_227844"
+  },
+  {
+    "symbol": "AGI-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.19867100",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791559423000,
+    "tranId": "1791537317374547190_513_219480_PNL",
+    "tradeId": "1791537317374547190_513_219479"
+  },
+  {
+    "symbol": "AGI-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.05158054",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791559423000,
+    "tranId": "1791537317374547190_513_219480_COMMISSION",
+    "tradeId": "1791537317374547190_513_219479"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.72812000",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791559030000,
+    "tranId": "1791537317374547190_513_216659_PNL",
+    "tradeId": "1791537317374547190_513_216658"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04931286",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791559030000,
+    "tranId": "1791537317374547190_513_216659_COMMISSION",
+    "tradeId": "1791537317374547190_513_216658"
+  },
+  {
+    "symbol": "CYBERLEEK-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-4.50393480",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791553908000,
+    "tranId": "1791537317374547190_513_161280_PNL",
+    "tradeId": "1791537317374547190_513_161279"
+  },
+  {
+    "symbol": "CYBERLEEK-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02776110",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791553908000,
+    "tranId": "1791537317374547190_513_161280_COMMISSION",
+    "tradeId": "1791537317374547190_513_161279"
+  },
+  {
+    "symbol": "CYBERLEEK-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03001306",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791550305000,
+    "tranId": "1791537317374547190_513_123590",
+    "tradeId": "1791537317374547190_513_123589"
+  },
+  {
+    "symbol": "JUP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04997043",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791548188000,
+    "tranId": "1791537317374547190_513_102018",
+    "tradeId": "1791537317374547190_513_102017"
+  },
+  {
+    "symbol": "UPHOOD-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.70278750",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791547559000,
+    "tranId": "1791537317374547190_513_95452_PNL",
+    "tradeId": "1791537317374547190_513_95451"
+  },
+  {
+    "symbol": "UPHOOD-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04816092",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791547559000,
+    "tranId": "1791537317374547190_513_95452_COMMISSION",
+    "tradeId": "1791537317374547190_513_95451"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00277371",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791547202000,
+    "tranId": "1791537317374547190_513_87417",
+    "tradeId": "1791537317374547190_513_87416"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00379956",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791547202000,
+    "tranId": "1791537317374547190_513_85838",
+    "tradeId": "1791537317374547190_513_85837"
+  },
+  {
+    "symbol": "BATON-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03000205",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791542244000,
+    "tranId": "1791537317374547190_513_29895",
+    "tradeId": "1791537317374547190_513_29894"
+  },
+  {
+    "symbol": "PONS-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.76542000",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791542100000,
+    "tranId": "1791537317374547190_513_28016_PNL",
+    "tradeId": "1791537317374547190_513_28015"
+  },
+  {
+    "symbol": "PONS-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03811662",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791542100000,
+    "tranId": "1791537317374547190_513_28016_COMMISSION",
+    "tradeId": "1791537317374547190_513_28015"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "9.89906500",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791537718000,
+    "tranId": "1791537317374547190_513_2470_PNL",
+    "tradeId": "1791537317374547190_513_2469"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02386907",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791537718000,
+    "tranId": "1791537317374547190_513_2470_COMMISSION",
+    "tradeId": "1791537317374547190_513_2469"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02881861",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791533022000,
+    "tranId": "1790058112381879764_513_19444388",
+    "tradeId": "1790058112381879764_513_19444387"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00294271",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532839000,
+    "tranId": "1790058112381879764_513_19407666",
+    "tradeId": "1790058112381879764_513_19407664"
+  },
+  {
+    "symbol": "PONS-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00397475",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532838000,
+    "tranId": "1790058112381879764_513_19404402",
+    "tradeId": "1790058112381879764_513_19404401"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00382738",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532838000,
+    "tranId": "1790058112381879764_513_19403161",
+    "tradeId": "1790058112381879764_513_19403158"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00479985",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19402387",
+    "tradeId": "1790058112381879764_513_19402386"
+  },
+  {
+    "symbol": "UPHOOD-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00986911",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19401358",
+    "tradeId": "1790058112381879764_513_19401357"
+  },
+  {
+    "symbol": "ZEC-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00996130",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19400973",
+    "tradeId": "1790058112381879764_513_19400972"
+  },
+  {
+    "symbol": "DOGE-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.01009629",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19400197",
+    "tradeId": "1790058112381879764_513_19400196"
+  },
+  {
+    "symbol": "AGI-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.10035575",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19400169",
+    "tradeId": "1790058112381879764_513_19400168"
+  },
+  {
+    "symbol": "POL-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00503091",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791532837000,
+    "tranId": "1790058112381879764_513_19399430",
+    "tradeId": "1790058112381879764_513_19399429"
+  },
+  {
+    "symbol": "UPHOOD-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.05001232",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791527944000,
+    "tranId": "1790058112381879764_513_19194142",
+    "tradeId": "1790058112381879764_513_19194141"
+  },
+  {
+    "symbol": "RLC-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "7.65326000",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791525407000,
+    "tranId": "1790058112381879764_513_19177877_PNL",
+    "tradeId": "1790058112381879764_513_19177876"
+  },
+  {
+    "symbol": "RLC-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03386060",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791525407000,
+    "tranId": "1790058112381879764_513_19177877_COMMISSION",
+    "tradeId": "1790058112381879764_513_19177876"
+  },
+  {
+    "symbol": "W-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "7.16415809",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791524370000,
+    "tranId": "1790058112381879764_513_19169341_PNL",
+    "tradeId": "1790058112381879764_513_19169340"
+  },
+  {
+    "symbol": "W-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03358922",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791524370000,
+    "tranId": "1790058112381879764_513_19169341_COMMISSION",
+    "tradeId": "1790058112381879764_513_19169340"
+  },
+  {
+    "symbol": "PONS-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03999933",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791522157000,
+    "tranId": "1790058112381879764_513_19152646",
+    "tradeId": "1790058112381879764_513_19152645"
+  },
+  {
+    "symbol": "AGI-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04998120",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791520736000,
+    "tranId": "1790058112381879764_513_19142580",
+    "tradeId": "1790058112381879764_513_19142579"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-4.02267600",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791520055000,
+    "tranId": "1790058112381879764_513_19138259_PNL",
+    "tradeId": "1790058112381879764_513_19138258"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03211568",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791520055000,
+    "tranId": "1790058112381879764_513_19138259_COMMISSION",
+    "tradeId": "1790058112381879764_513_19138258"
+  },
+  {
+    "symbol": "ZEC-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04939137",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791519805000,
+    "tranId": "1790058112381879764_513_19136479",
+    "tradeId": "1790058112381879764_513_19136478"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00300055",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791518403000,
+    "tranId": "1790058112381879764_513_19119914",
+    "tradeId": "1790058112381879764_513_19119913"
+  },
+  {
+    "symbol": "W-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00324442",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791518403000,
+    "tranId": "1790058112381879764_513_19118093",
+    "tradeId": "1790058112381879764_513_19118092"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00380746",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791518403000,
+    "tranId": "1790058112381879764_513_19117716",
+    "tradeId": "1790058112381879764_513_19117715"
+  },
+  {
+    "symbol": "JEANPHIL-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03010434",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791516052000,
+    "tranId": "1790058112381879764_513_19093428",
+    "tradeId": "1790058112381879764_513_19093427"
+  },
+  {
+    "symbol": "OPG-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04744880",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791515997000,
+    "tranId": "1790058112381879764_513_19093004",
+    "tradeId": "1790058112381879764_513_19093003"
+  },
+  {
+    "symbol": "ALLINU-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-4.15485590",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791513390000,
+    "tranId": "1790058112381879764_513_19072341_PNL",
+    "tradeId": "1790058112381879764_513_19072340"
+  },
+  {
+    "symbol": "ALLINU-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03207735",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791513390000,
+    "tranId": "1790058112381879764_513_19072341_COMMISSION",
+    "tradeId": "1790058112381879764_513_19072340"
+  },
+  {
+    "symbol": "ALLINU-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02999992",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791512823000,
+    "tranId": "1790058112381879764_513_19068727",
+    "tradeId": "1790058112381879764_513_19068726"
+  },
+  {
+    "symbol": "POL-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04986380",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791511718000,
+    "tranId": "1790058112381879764_513_19060832",
+    "tradeId": "1790058112381879764_513_19060831"
+  },
+  {
+    "symbol": "OTC-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "9.26763080",
+    "asset": "VST",
+    "info": "Close Short",
+    "time": 1791507592000,
+    "tranId": "1790058112381879764_513_19029297_PNL",
+    "tradeId": "1790058112381879764_513_19029296"
+  },
+  {
+    "symbol": "OTC-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02541338",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791507592000,
+    "tranId": "1790058112381879764_513_19029297_COMMISSION",
+    "tradeId": "1790058112381879764_513_19029296"
+  },
+  {
+    "symbol": "DOGE-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04994541",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791506134000,
+    "tranId": "1790058112381879764_513_19021466",
+    "tradeId": "1790058112381879764_513_19021465"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00289312",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791504040000,
+    "tranId": "1790058112381879764_513_18971885",
+    "tradeId": "1790058112381879764_513_18971884"
+  },
+  {
+    "symbol": "OTC-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00813127",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791504040000,
+    "tranId": "1790058112381879764_513_18970810",
+    "tradeId": "1790058112381879764_513_18970809"
+  },
+  {
+    "symbol": "RLC-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.01097311",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791504040000,
+    "tranId": "1790058112381879764_513_18970632",
+    "tradeId": "1790058112381879764_513_18970631"
+  },
+  {
+    "symbol": "W-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00303000",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791504039000,
+    "tranId": "1790058112381879764_513_18969240",
+    "tradeId": "1790058112381879764_513_18969238"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "-0.00370339",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791504038000,
+    "tranId": "1790058112381879764_513_18967509",
+    "tradeId": "1790058112381879764_513_18967508"
+  },
+  {
+    "symbol": "UNI-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.65300000",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791503614000,
+    "tranId": "1790058112381879764_513_18793485_PNL",
+    "tradeId": "1790058112381879764_513_18793484"
+  },
+  {
+    "symbol": "UNI-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04594850",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791503614000,
+    "tranId": "1790058112381879764_513_18793485_COMMISSION",
+    "tradeId": "1790058112381879764_513_18793484"
+  },
+  {
+    "symbol": "UNI-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.04777500",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791498617000,
+    "tranId": "1790058112381879764_513_18765975",
+    "tradeId": "1790058112381879764_513_18765974"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "REALIZED_PNL",
+    "income": "-3.58653900",
+    "asset": "VST",
+    "info": "Close Long",
+    "time": 1791497902000,
+    "tranId": "1790058112381879764_513_18762286_PNL",
+    "tradeId": "1790058112381879764_513_18762285"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02820649",
+    "asset": "VST",
+    "info": "Position closing fee",
+    "time": 1791497902000,
+    "tranId": "1790058112381879764_513_18762286_COMMISSION",
+    "tradeId": "1790058112381879764_513_18762285"
+  },
+  {
+    "symbol": "DARKSWAP-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.02999976",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791497701000,
+    "tranId": "1790058112381879764_513_18761231",
+    "tradeId": "1790058112381879764_513_18761230"
+  },
+  {
+    "symbol": "OTC-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03004720",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791495824000,
+    "tranId": "1790058112381879764_513_18749517",
+    "tradeId": "1790058112381879764_513_18749516"
+  },
+  {
+    "symbol": "BOME-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03762707",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791495212000,
+    "tranId": "1790058112381879764_513_18745843",
+    "tradeId": "1790058112381879764_513_18745842"
+  },
+  {
+    "symbol": "W-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03000715",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791493577000,
+    "tranId": "1790058112381879764_513_18735762",
+    "tradeId": "1790058112381879764_513_18735761"
+  },
+  {
+    "symbol": "RLC-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03003397",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791489760000,
+    "tranId": "1790058112381879764_513_18706749",
+    "tradeId": "1790058112381879764_513_18706748"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "FUNDING_FEE",
+    "income": "0.00300691",
+    "asset": "VST",
+    "info": "Funding Fee",
+    "time": 1791489606000,
+    "tranId": "1790058112381879764_513_18698380",
+    "tradeId": "1790058112381879764_513_18698379"
+  },
+  {
+    "symbol": "TIA-USDT",
+    "incomeType": "TRADING_FEE",
+    "income": "-0.03002287",
+    "asset": "VST",
+    "info": "Position opening fee",
+    "time": 1791488957000,
+    "tranId": "1790058112381879764_513_18678175",
+    "tradeId": "1790058112381879764_513_18678174"
+  }
+]
