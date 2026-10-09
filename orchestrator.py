@@ -29,6 +29,16 @@ def _evaluate_hard_gate(
         return hard_gate(market_features, max_spread_pct)
 
 
+def _safe_rr(raw: Any, default: float = 2.0) -> float:
+    """Safely coerces recommended R:R to float with min 2.0 guardrail, protecting against non-numeric payloads."""
+    try:
+        val = float(raw)
+        import math
+        return val if math.isfinite(val) and val >= 2.0 else default
+    except (ValueError, TypeError):
+        return default
+
+
 class SessionState(BaseModel):
     session_id: str
     status: str = "IDLE"  # IDLE, ACTIVE_SEARCHING, EXECUTING_ENTRY, EXHAUSTED, TERMINATED
@@ -201,7 +211,7 @@ class SessionOrchestrator:
         else:
             pos_dir = "UNKNOWN"
 
-        target_rr = max(2.0, float(playbook_match.recommended_rr if playbook_match and playbook_match.recommended_rr else 2.0))
+        target_rr = _safe_rr(playbook_match.recommended_rr if playbook_match else 2.0)
         current_lev = self.current_session.leverage if self.current_session else 20
         effective_target_lev = current_lev
         if atr_val and cand.last_price > 0:
@@ -738,11 +748,9 @@ class SessionOrchestrator:
 
         # Step 2: Tier 1 Batch Triage via 9Router
         # Cap batch to top 4 candidates for fast LLM inference (< 25s) and timeout protection.
-        # In BOTH mode, balance candidates symmetrically across LONG and SHORT.
+        # In BOTH mode, balance and interleave candidates symmetrically across LONG and SHORT.
         triage_batch: list[Dict[str, Any]] = []
-        if len(screened_candidates) <= 4:
-            triage_batch = screened_candidates
-        elif current_dir == "BOTH":
+        if current_dir == "BOTH":
             def _get_target_dir(sc_item):
                 pm = sc_item.get("playbook_match")
                 if pm and hasattr(pm, "direction") and pm.direction in ("LONG", "SHORT"):
@@ -760,11 +768,15 @@ class SessionOrchestrator:
             short_cands.sort(key=lambda x: getattr(x.get("playbook_match"), "score", 0) if x.get("playbook_match") else 0, reverse=True)
 
             selected_syms = set()
-            for sc in long_cands[:2]:
-                triage_batch.append(sc)
-                selected_syms.add(sc["cand"].symbol)
-            for sc in short_cands[:2]:
-                if sc["cand"].symbol not in selected_syms:
+            # Interleave LONG and SHORT candidates: [L1, S1, L2, S2] so fallback triage_batch[:2] evaluates 1 LONG + 1 SHORT
+            max_len = max(len(long_cands), len(short_cands))
+            for idx in range(max_len):
+                if idx < len(long_cands) and len(triage_batch) < 4:
+                    sc = long_cands[idx]
+                    triage_batch.append(sc)
+                    selected_syms.add(sc["cand"].symbol)
+                if idx < len(short_cands) and short_cands[idx]["cand"].symbol not in selected_syms and len(triage_batch) < 4:
+                    sc = short_cands[idx]
                     triage_batch.append(sc)
                     selected_syms.add(sc["cand"].symbol)
             if len(triage_batch) < 4:
@@ -861,7 +873,7 @@ class SessionOrchestrator:
 
                     if t_cand.conviction_score >= 70:
                         atr_v = sc["atr_val"]
-                        target_rr = max(2.0, float(sc["playbook_match"].recommended_rr if sc["playbook_match"] and sc["playbook_match"].recommended_rr else 2.0))
+                        target_rr = _safe_rr(sc["playbook_match"].recommended_rr if sc.get("playbook_match") else 2.0)
 
                         # Smart Adaptive Leverage for WATCH candidate (ATR-capped to avoid liquidation guard reject)
                         effective_target_lev = self.current_session.leverage

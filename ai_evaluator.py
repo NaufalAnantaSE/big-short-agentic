@@ -280,6 +280,10 @@ def validate_batch_triage_payload(
             sym = str(c.get("symbol", "")).strip().upper()
             if sym:
                 dirs = c.get("allowed_directions") or default_allowed
+                if isinstance(dirs, str):
+                    dirs = [dirs]
+                elif not isinstance(dirs, (list, tuple, set)):
+                    dirs = default_allowed
                 cand_map[sym] = [str(d).strip().upper() for d in dirs]
 
     seen_symbols = set()

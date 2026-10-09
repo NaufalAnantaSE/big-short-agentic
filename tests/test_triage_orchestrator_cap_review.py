@@ -176,3 +176,58 @@ def test_orchestrator_logs_enhanced_triage_telemetry(mocker):
     assert fdata["attempts"] == 1
     assert fdata["latency_ms"] == 60002.5
 
+
+def test_fallback_evaluates_interleaved_long_and_short_in_both_mode(mocker):
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    orch.start_session(margin_per_pos=5.0, leverage=20, quota=5, direction_mode="BOTH")
+
+    cands = [
+        make_cand("LONG1", price_chg=2.0),
+        make_cand("LONG2", price_chg=3.0),
+        make_cand("SHORT1", price_chg=25.0),
+        make_cand("SHORT2", price_chg=30.0),
+    ]
+
+    mocker.patch.object(orch.scanner, "scan_universe", return_value=cands)
+    mocker.patch.object(orch.client, "get_klines", return_value=[])
+
+    def mock_evaluate_playbook(*args, **kwargs):
+        sym = kwargs.get("symbol") or (args[0] if args else "")
+        mock_p = MagicMock()
+        mock_p.score = 80
+        mock_p.direction = "LONG" if "LONG" in sym else "SHORT"
+        mock_p.playbook = "OVERSOLD_REVERSAL" if "LONG" in sym else "PUMP_EXHAUSTION"
+        mock_p.recommended_rr = 2.0
+        mock_p.model_dump.return_value = {"score": 80, "playbook": mock_p.playbook}
+        return mock_p
+
+    mocker.patch("orchestrator.evaluate_playbooks", side_effect=mock_evaluate_playbook)
+    mocker.patch(
+        "orchestrator.build_candidate_features",
+        return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.001, "atr_to_friction": 8.0, "atr": 0.2}
+    )
+
+    # Triage fails with timeout
+    mocker.patch.object(
+        orch.ai,
+        "evaluate_batch_triage",
+        return_value=BatchTriageResult(
+            ranked_candidates=[],
+            selected_finalists=[],
+            is_valid=False,
+            error_message="batch_triage_error: timed out",
+            error_type="READ_TIMEOUT"
+        )
+    )
+
+    deep_mock = mocker.patch.object(orch, "_evaluate_and_execute_candidate", return_value=({"executed": False}, 0, False))
+
+    orch.run_cycle()
+
+    # Fallback should evaluate exactly 2 candidates: 1 LONG and 1 SHORT
+    assert deep_mock.call_count == 2
+    evaluated_syms = [call[1]["sc"]["cand"].symbol for call in deep_mock.call_args_list]
+    assert evaluated_syms == ["LONG1", "SHORT1"]
+
+
