@@ -110,7 +110,42 @@ Total 25 Order riil berhasil ditempatkan dan diverifikasi langsung ke bursa Bing
 15. `MUSEBOOK-USDT` | OrderID: `2108610772050382848`
 16. `BAT-USDT` | OrderID: `2108639083849846784`
 
-### 5. Pengecekan Kerapian Eksekusi & Teardown
+### 5. Audit Saldo Akun, TP/SL di Bursa, dan Laba/Rugi (Live PnL BingX VST)
+
+Data ditarik secara live melalui endpoint BingX Swap V2 (`/openApi/swap/v2/user/balance`, `/openApi/swap/v2/user/positions`, `/openApi/swap/v2/trade/openOrders`):
+
+#### A. Status Saldo & Ekuitas Portofolio (Live):
+- **Aset**: VST (Virtual USDT)
+- **Total Saldo (Balance)**: 100,149.71 VST
+- **Ekuitas Akun (Equity)**: 100,153.15 VST
+- **Margin Terpakai (Used Margin)**: 39.96 VST (Konsisten ~5 VST per posisi @ leverage adaptif)
+- **Margin Bebas (Available Margin)**: 100,109.75 VST
+- **Total Floating PnL**: **+3.4339 VST** (+8.59% keuntungan terhadap margin terpakai)
+
+#### B. Verifikasi 16 Order Trigger TP & SL Aktif di Bursa:
+Setiap posisi aktif di bursa memiliki tepat 2 order pengaman bersyarat (1 Stop Loss + 1 Take Profit) yang terpasang di server BingX:
+1. `BOME-USDT` (LONG 15x): Entry $0.0010464 | **SL**: $0.0009919 (-5.2%) | **TP**: $0.0011449 (+9.4%)
+2. `DOGE-USDT` (LONG 20x): Entry $0.08451 | **SL**: $0.08296 (-1.8%) | **TP**: $0.08777 (+3.8%)
+3. `POL-USDT` (SHORT 20x): Entry $0.09912 | **SL**: $0.10245 (+3.3%) | **TP**: $0.09173 (-7.4%)
+4. `ZEC-USDT` (SHORT 20x): Entry $1219.54 | **SL**: $1256.24 (+3.0%) | **TP**: $1130.00 (-7.3%)
+5. `OPG-USDT` (SHORT 20x): Entry $0.1450 | **SL**: $0.1489 (+2.7%) | **TP**: $0.1364 (-5.9%)
+6. `ORBIO-USDT` (SHORT 12x): Entry $0.054818 | **SL**: $0.057523 (+4.9%) | **TP**: $0.046127 (-15.8%)
+7. `MUSEBOOK-USDT` (SHORT 12x): Entry $0.00002034 | **SL**: $0.00002161 (+6.2%) | **TP**: $0.00001733 (-14.8%)
+8. `BAT-USDT` (SHORT 14x): Entry $0.13346 | **SL**: $0.14049 (+5.2%) | **TP**: $0.11645 (-12.7%)
+
+#### C. Kinerja Untung/Rugi Posisi Aktif Saat Ini (Floating PnL):
+- `MUSEBOOK-USDT` (SHORT): **+2.0598 VST (+41.29%)** [Profit]
+- `POL-USDT` (SHORT): **+1.5296 VST (+30.67%)** [Profit]
+- `ZEC-USDT` (SHORT): **+1.1121 VST (+22.51%)** [Profit]
+- `OPG-USDT` (SHORT): **+0.6201 VST (+12.42%)** [Profit]
+- `ORBIO-USDT` (SHORT): **+0.3394 VST (+6.72%)** [Profit]
+- `DOGE-USDT` (LONG): **+0.0372 VST (+0.74%)** [Profit]
+- `BAT-USDT` (SHORT): **-0.8590 VST (-17.20%)** [Floating loss]
+- `BOME-USDT` (LONG): **-1.3913 VST (-27.73%)** [Floating loss]
+- **Win-Rate Posisi Berjalan**: **75.0%** (6 Profit vs 2 Floating Loss)
+- **Net Floating PnL**: **+3.4339 VST**
+
+### 6. Pengecekan Kerapian Eksekusi & Teardown
 - **Orphan Order Check**: **0 Orphan Order** (Nihil order gantung).
 - Teardown terkonfirmasi aman via mekanisme cancel-on-evict dan fail-closed session stopping.
 
