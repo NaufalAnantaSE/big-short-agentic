@@ -56,6 +56,12 @@ class SessionState(BaseModel):
     executed_symbols: List[str] = Field(default_factory=list)
     started_at: float = 0.0
     risk_budget_per_trade: Optional[float] = None
+    strategy_capital_usdt: float = 100.0
+    max_daily_loss_pct: float = 3.0
+    daily_realized_pnl: float = 0.0
+    consecutive_losses: int = 0
+    max_consecutive_losses: int = 3
+    cooldown_until: float = 0.0
 
 
 MAX_TRIAGE_CANDIDATES = 12
@@ -130,6 +136,26 @@ class SessionOrchestrator:
                     )
                 self.watchlist.entries.clear()
             return self.current_session
+
+    def record_trade_outcome(self, symbol: str, realized_pnl: float, cooldown_seconds: float = 1800.0):
+        """
+        P1-3: Records realized PnL from a closed trade.
+        Updates daily loss and tracks consecutive loss streaks to trigger cooling off.
+        """
+        if not self.current_session:
+            return
+        self.current_session.daily_realized_pnl += realized_pnl
+        if realized_pnl < 0:
+            self.current_session.consecutive_losses += 1
+            if self.current_session.consecutive_losses >= self.current_session.max_consecutive_losses:
+                self.current_session.cooldown_until = time.time() + cooldown_seconds
+                AuditLogger.log_event("COOLDOWN_TRIGGERED", {
+                    "symbol": symbol,
+                    "consecutive_losses": self.current_session.consecutive_losses,
+                    "cooldown_seconds": cooldown_seconds
+                }, session_id=self.current_session.session_id)
+        elif realized_pnl > 0:
+            self.current_session.consecutive_losses = 0
 
     def _evaluate_and_execute_candidate(
         self,
@@ -298,6 +324,8 @@ class SessionOrchestrator:
                 veto_reason = f"direction_{pos_dir}_barred_for_candidate"
             elif not gate_ok:
                 veto_reason = f"hard_gate_rejected_{pos_dir}:{','.join(gate_reasons)}"
+            elif self.current_session and cand.symbol in self.current_session.executed_symbols:
+                veto_reason = f"ANTI_REENTRY_IN_SESSION:symbol={cand.symbol}"
 
         # P0-2: Fresh quote revalidation and executable price re-sizing before order execution
         executable_price = cand.last_price
@@ -542,6 +570,30 @@ class SessionOrchestrator:
 
         session_id = self.current_session.session_id
         cycle_gen = getattr(self.current_session, "generation_token", "")
+
+        # P1-3: Daily loss limit check
+        max_allowed_loss = self.current_session.strategy_capital_usdt * (self.current_session.max_daily_loss_pct / 100.0)
+        if self.current_session.daily_realized_pnl <= -1.0 * max_allowed_loss:
+            AuditLogger.log_event("DAILY_LOSS_LIMIT_HIT", {
+                "daily_realized_pnl": self.current_session.daily_realized_pnl,
+                "max_allowed_loss": max_allowed_loss,
+                "strategy_capital": self.current_session.strategy_capital_usdt
+            }, session_id=session_id)
+            return {
+                "status": "DAILY_LOSS_LIMIT_REACHED",
+                "message": f"Daily loss limit reached ({self.current_session.daily_realized_pnl:.2f} USDT <= -{max_allowed_loss:.2f} USDT). New entries halted."
+            }
+
+        # P1-3: Consecutive losses cooldown check
+        if time.time() < self.current_session.cooldown_until:
+            AuditLogger.log_event("COOLDOWN_ACTIVE", {
+                "consecutive_losses": self.current_session.consecutive_losses,
+                "cooldown_remaining_s": self.current_session.cooldown_until - time.time()
+            }, session_id=session_id)
+            return {
+                "status": "COOLDOWN_ACTIVE",
+                "message": f"Cooldown active after {self.current_session.consecutive_losses} consecutive losses."
+            }
 
         try:
             occupied = self.scanner.get_occupied_symbols()
