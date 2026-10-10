@@ -71,12 +71,14 @@ class SessionStartRequest(BaseModel):
     execution_mode: str = Field(default="EXCHANGE_DEMO")
     direction_mode: str = Field(default="SHORT")
     exit_policy: str = Field(default="MANUAL_ONLY")
+    risk_budget_per_trade: Optional[float] = Field(default=2.0, ge=0.5, le=100.0)
 
 class SessionUpdateRequest(BaseModel):
     margin_per_pos: Optional[float] = Field(None, ge=1.0, le=500.0)
     quota: Optional[int] = Field(None, ge=1, le=50)
     auto_scan: Optional[bool] = None
     scan_interval: Optional[int] = Field(None, ge=10, le=3600)
+    risk_budget_per_trade: Optional[float] = Field(None, ge=0.5, le=100.0)
 
 class AutoScanToggleRequest(BaseModel):
     auto_scan: bool
@@ -248,7 +250,8 @@ def start_session(req: SessionStartRequest, user: Dict[str, Any] = Depends(requi
             environment=req.environment,
             execution_mode=req.execution_mode,
             direction_mode=req.direction_mode,
-            exit_policy=req.exit_policy
+            exit_policy=req.exit_policy,
+            risk_budget_per_trade=req.risk_budget_per_trade
         )
         return {"success": True, "session": res}
     except Exception as exc:

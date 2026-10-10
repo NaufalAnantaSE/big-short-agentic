@@ -18,6 +18,7 @@ class AppConfig(BaseModel):
     default_margin_per_pos: float = 5.0
     default_leverage: int = 20
     default_quota: int = 2
+    default_risk_budget_usdt: float = 2.0
     max_spread_pct: float = 0.35
     min_volume_24h_usdt: float = 50000.0
 

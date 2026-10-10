@@ -149,6 +149,8 @@ def init_db():
             cursor.execute("ALTER TABLE sessions ADD COLUMN last_pnl_date TEXT")
         if "processed_income_ids" not in existing_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN processed_income_ids TEXT DEFAULT '[]'")
+        if "risk_budget_per_trade" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN risk_budget_per_trade REAL DEFAULT 2.0")
 
         conn.commit()
 
@@ -258,7 +260,8 @@ def save_session(
     environment: str = "BINGX_VST",
     execution_mode: str = "EXCHANGE_DEMO",
     direction_mode: str = "SHORT",
-    exit_policy: str = "MANUAL_ONLY"
+    exit_policy: str = "MANUAL_ONLY",
+    risk_budget_per_trade: Optional[float] = 2.0
 ):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -266,14 +269,14 @@ def save_session(
         INSERT OR REPLACE INTO sessions (
             session_id, user_id, status, margin_per_pos, leverage, quota, filled_count,
             mode, is_live, started_at, auto_scan, scan_interval, last_scan_at, latest_evaluations,
-            environment, execution_mode, direction_mode, exit_policy
+            environment, execution_mode, direction_mode, exit_policy, risk_budget_per_trade
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id, user_id, status, margin, leverage, quota, filled_count,
             mode, 1 if is_live else 0, started_at, 1 if auto_scan else 0, scan_interval,
             last_scan_at, latest_evaluations,
-            environment, execution_mode, direction_mode, exit_policy
+            environment, execution_mode, direction_mode, exit_policy, risk_budget_per_trade
         ))
         conn.commit()
 

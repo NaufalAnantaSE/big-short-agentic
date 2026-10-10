@@ -291,6 +291,8 @@ class TenantSessionManager:
                         current_sess.processed_income_ids = json.loads(latest_db_sess["processed_income_ids"])
                     except Exception:
                         pass
+                if latest_db_sess.get("risk_budget_per_trade") is not None:
+                    current_sess.risk_budget_per_trade = float(latest_db_sess["risk_budget_per_trade"])
             quota = current_sess.quota
             margin_per_pos = current_sess.margin_per_pos
             leverage = current_sess.leverage
@@ -368,7 +370,12 @@ class TenantSessionManager:
             "next_scan_in": next_scan_in,
             "is_scanning": (user_id in self._currently_scanning),
             "watchlist": [entry.model_dump() for entry in orch.watchlist.get_all_entries()] if orch else [],
-            "resting_orders_count": orch.watchlist.count_resting_orders() if orch else 0
+            "resting_orders_count": orch.watchlist.count_resting_orders() if orch else 0,
+            "risk_budget_per_trade": (
+                getattr(current_sess, "risk_budget_per_trade", 2.0)
+                if current_sess
+                else (latest_db_sess.get("risk_budget_per_trade", 2.0) if latest_db_sess else 2.0)
+            )
         }
 
         return {
@@ -399,7 +406,8 @@ class TenantSessionManager:
         environment: str = "BINGX_VST",
         execution_mode: str = "EXCHANGE_DEMO",
         direction_mode: str = "SHORT",
-        exit_policy: str = "MANUAL_ONLY"
+        exit_policy: str = "MANUAL_ONLY",
+        risk_budget_per_trade: Optional[float] = 2.0
     ) -> Dict[str, Any]:
         """Initializes and persists a new trading session for this user."""
         orch = self.get_orchestrator(user_id)
@@ -415,7 +423,8 @@ class TenantSessionManager:
             execution_mode=execution_mode,
             direction_mode=direction_mode,
             exit_policy=exit_policy,
-            universe_mode=validated_mode
+            universe_mode=validated_mode,
+            risk_budget_per_trade=risk_budget_per_trade
         )
         
         now = time.time()
@@ -438,7 +447,8 @@ class TenantSessionManager:
             environment=environment,
             execution_mode=execution_mode,
             direction_mode=direction_mode,
-            exit_policy=exit_policy
+            exit_policy=exit_policy,
+            risk_budget_per_trade=risk_budget_per_trade
         )
 
         # Reserve the first scan before spawning it. Without this claim, the
@@ -481,7 +491,8 @@ class TenantSessionManager:
             "direction_mode": direction_mode,
             "exit_policy": exit_policy,
             "auto_scan": auto_scan,
-            "scan_interval": scan_interval
+            "scan_interval": scan_interval,
+            "risk_budget_per_trade": risk_budget_per_trade
         }
 
     def update_session_params(

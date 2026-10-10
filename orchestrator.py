@@ -140,7 +140,8 @@ class SessionOrchestrator:
             "execution_mode": execution_mode,
             "direction_mode": direction_mode,
             "exit_policy": exit_policy,
-            "universe_mode": universe_mode
+            "universe_mode": universe_mode,
+            "risk_budget_per_trade": risk_budget_per_trade
         }, session_id=session_id)
 
         # Startup reconciliation: Phase 2 feature, removed from hot path
@@ -1316,7 +1317,8 @@ class SessionOrchestrator:
                             max_allowed_leverage=20,
                             direction=pos_dir,
                             atr=atr_v,
-                            target_rr=target_rr
+                            target_rr=target_rr,
+                            risk_budget_usdt=getattr(self.current_session, "risk_budget_per_trade", None)
                         )
                         added, status_msg = self.watchlist.add_candidate(
                             symbol=cand_item.symbol,
