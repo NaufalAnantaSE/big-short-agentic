@@ -23,6 +23,11 @@ class CandidatePair(BaseModel):
     spread_percent: float
     contract_info: Dict[str, Any]
 
+class ExposureUnknownError(Exception):
+    """Raised when account positions or open orders cannot be verified (fail closed)."""
+    pass
+
+
 class MarketScanner:
     def __init__(self, client: BingXClient, config: AppConfig):
         self.client = client
@@ -32,27 +37,41 @@ class MarketScanner:
         """
         Retrieves all symbols that currently have active positions or pending orders.
         Guarantees coexistence: Agent will NEVER select an occupied pair.
+        Fails closed with ExposureUnknownError if positions or orders query fails.
         """
         occupied: Set[str] = set()
 
-        # Check positions
+        # Check positions - must succeed
         try:
             positions = self.client.get_positions()
-            for p in positions:
-                # BingX position has positionAmt or net quantity
-                amt = float(p.get("positionAmt", p.get("initialMargin", 0)))
-                if amt != 0:
-                    occupied.add(p.get("symbol", ""))
-        except Exception:
-            pass
+        except Exception as e:
+            raise ExposureUnknownError(f"Failed to query account positions: {str(e)}") from e
 
-        # Check open orders
+        if not isinstance(positions, list):
+            raise ExposureUnknownError(f"Invalid positions response type: {type(positions)}")
+
+        for p in positions:
+            if isinstance(p, dict):
+                amt = float(p.get("positionAmt", p.get("initialMargin", 0)) or 0)
+                if amt != 0:
+                    sym = p.get("symbol", "")
+                    if sym:
+                        occupied.add(sym)
+
+        # Check open orders - must succeed
         try:
             orders = self.client.get_open_orders()
-            for o in orders:
-                occupied.add(o.get("symbol", ""))
-        except Exception:
-            pass
+        except Exception as e:
+            raise ExposureUnknownError(f"Failed to query open orders: {str(e)}") from e
+
+        if not isinstance(orders, list):
+            raise ExposureUnknownError(f"Invalid open orders response type: {type(orders)}")
+
+        for o in orders:
+            if isinstance(o, dict):
+                sym = o.get("symbol", "")
+                if sym:
+                    occupied.add(sym)
 
         return {s for s in occupied if s}
 

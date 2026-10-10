@@ -521,8 +521,17 @@ class SessionOrchestrator:
 
         try:
             occupied = self.scanner.get_occupied_symbols()
-        except Exception:
-            occupied = set()
+        except Exception as e:
+            session_id = self.current_session.session_id if self.current_session else ""
+            AuditLogger.log_event("EXPOSURE_UNKNOWN", {
+                "error": str(e),
+                "message": "Account exposure query failed; failing closed to prevent double-entry / quota violation."
+            }, session_id=session_id)
+            return {
+                "status": "EXPOSURE_UNKNOWN",
+                "error": str(e),
+                "message": "Account exposure query failed; new entries blocked (fail-closed)."
+            }
 
         occupied_count = len(occupied)
         self.current_session.filled_count = occupied_count
