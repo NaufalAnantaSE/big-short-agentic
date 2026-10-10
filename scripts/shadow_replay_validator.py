@@ -1,26 +1,60 @@
 #!/usr/bin/env python3
 """
-Fase 3: Experimental Validation Harness (Shadow & Replay)
-Freezes code + config + gateway baseline.
-Compares:
-1. Deterministic baseline (rule-based hard gates + playbook score >= 50 + fixed risk, no LLM)
-2. Two-Tier LLM pipeline (deterministic gates + AI Triage & Deep review)
+Fase 3: Experimental Validation Harness (Shadow & Replay).
 
-Computes required metrics per experiment:
-- Net expectancy (in R)
+This module computes the metrics required by the live-money protocol from a REAL
+replay dataset. It deliberately contains NO trade outcomes of its own.
+
+WHY: a synthetic outcome list can be quoted as if it were an experiment result.
+The earlier version of this file shipped hardcoded "baseline" and "LLM" trade lists
+and a `run_synthetic_shadow_test()` entry point. Those numbers were not a market
+replay, did not call the scanner/gates/model, and must never appear in any report
+except as a record-shape example. They have been removed.
+
+Required metrics per experiment (computed here):
+- Net expectancy in R
 - Profit factor
-- Max drawdown (in R)
+- Max drawdown in R
 - MAE / MFE distributions
-- Total costs (fees + slippage + funding + AI token cost)
-- Confidence calibration buckets vs actual win rate
-- Stratification by playbook, direction (LONG vs SHORT), and fallback status
+- Full costs (fee + funding + slippage)
+- Confidence calibration buckets vs realized win rate
+- Stratification by playbook, direction, execution path, and fallback status
+
+Record shape (FORMAT EXAMPLE ONLY — zeros, not results):
+
+    {
+      "symbol": "EXAMPLE-USDT",
+      "playbook": "PUMP_EXHAUSTION",
+      "direction": "SHORT",
+      "realized_r": 0.0,
+      "holding_time_s": 0,
+      "fee": 0.0,
+      "funding_fee": 0.0,
+      "slippage_pct": 0.0,
+      "mae_pct": 0.0,
+      "mfe_pct": 0.0,
+      "ai_confidence": 0.0,
+      "is_fallback": false,
+      "execution_path": "DIRECT",
+      "quote_ts": 0,
+      "entry_ts": 0,
+      "exit_ts": 0,
+      "exit_reason": "TP"
+    }
 """
 
 from __future__ import annotations
-import math
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+import json
+import os
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional, Sequence
 from collections import defaultdict
+
+REQUIRED_FIELDS = ("symbol", "playbook", "direction", "realized_r")
+
+
+class ReplayDatasetError(ValueError):
+    """Raised when a replay dataset is missing, malformed, or lacks provenance."""
 
 
 @dataclass
@@ -29,7 +63,7 @@ class ReplayTradeResult:
     playbook: str
     direction: str  # LONG or SHORT
     realized_r: float
-    holding_time_s: int
+    holding_time_s: int = 0
     fee: float = 0.0
     funding_fee: float = 0.0
     slippage_pct: float = 0.0
@@ -37,10 +71,87 @@ class ReplayTradeResult:
     mfe_pct: float = 0.0  # Maximum Favorable Excursion (% in favor of entry)
     ai_confidence: float = 0.0
     is_fallback: bool = False
+    execution_path: str = "UNKNOWN"  # DIRECT | FALLBACK | WATCHLIST
+    quote_ts: int = 0
+    entry_ts: int = 0
+    exit_ts: int = 0
+    exit_reason: str = "UNKNOWN"
 
 
-def calculate_experiment_metrics(trades: List[ReplayTradeResult]) -> Dict[str, Any]:
-    """Computes standard trading metrics required for Fase 3 live-money validation."""
+def _require_finite_number(record: Dict[str, Any], key: str, source: str) -> float:
+    raw = record.get(key, 0.0)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ReplayDatasetError(f"{source}: field '{key}' must be numeric, got {raw!r}")
+    return float(raw)
+
+
+def parse_replay_records(records: Sequence[Dict[str, Any]], source: str = "<memory>") -> List[ReplayTradeResult]:
+    """Validates raw replay records (fail-closed) and converts them to typed results."""
+    if not records:
+        raise ReplayDatasetError(f"{source}: dataset is empty; refusing to compute metrics")
+
+    parsed: List[ReplayTradeResult] = []
+    for index, record in enumerate(records):
+        where = f"{source}[{index}]"
+        if not isinstance(record, dict):
+            raise ReplayDatasetError(f"{where}: record must be an object, got {type(record).__name__}")
+        missing = [f for f in REQUIRED_FIELDS if record.get(f) in (None, "")]
+        if missing:
+            raise ReplayDatasetError(f"{where}: missing required field(s): {', '.join(missing)}")
+
+        direction = str(record["direction"]).upper()
+        if direction not in ("LONG", "SHORT"):
+            raise ReplayDatasetError(f"{where}: direction must be LONG or SHORT, got {record['direction']!r}")
+
+        parsed.append(ReplayTradeResult(
+            symbol=str(record["symbol"]),
+            playbook=str(record["playbook"]),
+            direction=direction,
+            realized_r=_require_finite_number(record, "realized_r", where),
+            holding_time_s=int(_require_finite_number(record, "holding_time_s", where)),
+            fee=_require_finite_number(record, "fee", where),
+            funding_fee=_require_finite_number(record, "funding_fee", where),
+            slippage_pct=_require_finite_number(record, "slippage_pct", where),
+            mae_pct=_require_finite_number(record, "mae_pct", where),
+            mfe_pct=_require_finite_number(record, "mfe_pct", where),
+            ai_confidence=_require_finite_number(record, "ai_confidence", where),
+            is_fallback=bool(record.get("is_fallback", False)),
+            execution_path=str(record.get("execution_path", "UNKNOWN")).upper(),
+            quote_ts=int(_require_finite_number(record, "quote_ts", where)),
+            entry_ts=int(_require_finite_number(record, "entry_ts", where)),
+            exit_ts=int(_require_finite_number(record, "exit_ts", where)),
+            exit_reason=str(record.get("exit_reason", "UNKNOWN")).upper(),
+        ))
+    return parsed
+
+
+def load_replay_dataset(path: str) -> List[ReplayTradeResult]:
+    """
+    Loads a real replay dataset from a JSON file. Fails closed when the file is
+    missing, unreadable, malformed, or contains no usable records.
+    """
+    if not path or not os.path.isfile(path):
+        raise ReplayDatasetError(f"replay dataset not found: {path!r}; refusing to fabricate results")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReplayDatasetError(f"replay dataset unreadable ({path}): {exc}") from exc
+
+    if isinstance(payload, dict):
+        records = payload.get("trades")
+        if records is None:
+            raise ReplayDatasetError(f"{path}: expected a JSON array or an object with a 'trades' array")
+    else:
+        records = payload
+
+    if not isinstance(records, list):
+        raise ReplayDatasetError(f"{path}: 'trades' must be an array")
+    return parse_replay_records(records, source=path)
+
+
+def calculate_experiment_metrics(trades: Sequence[ReplayTradeResult]) -> Dict[str, Any]:
+    """Computes standard trading metrics required for live-money validation."""
     if not trades:
         return {
             "total_trades": 0,
@@ -67,7 +178,6 @@ def calculate_experiment_metrics(trades: List[ReplayTradeResult]) -> Dict[str, A
 
     profit_factor = (total_r_gain / total_r_loss) if total_r_loss > 0 else (float("inf") if total_r_gain > 0 else 0.0)
 
-    # Calculate Max Drawdown in R
     cumulative_r = 0.0
     peak_r = 0.0
     max_dd_r = 0.0
@@ -102,10 +212,10 @@ def calculate_experiment_metrics(trades: List[ReplayTradeResult]) -> Dict[str, A
     }
 
 
-def calibrate_confidence_buckets(trades: List[ReplayTradeResult]) -> Dict[str, Dict[str, Any]]:
+def calibrate_confidence_buckets(trades: Sequence[ReplayTradeResult]) -> Dict[str, Dict[str, Any]]:
     """
-    Groups trades by AI confidence into 10% buckets ([50-60), [60-70), [70-80), [80-90), [90-100])
-    and computes empirical win rate and expectancy per bucket.
+    Groups trades by AI confidence into 10% buckets and computes empirical win
+    rate and expectancy per bucket. Confidence is NOT a probability until calibrated here.
     """
     bucket_ranges = [
         ("50-60", 50.0, 60.0),
@@ -139,62 +249,45 @@ def calibrate_confidence_buckets(trades: List[ReplayTradeResult]) -> Dict[str, D
     return buckets
 
 
-class ShadowReplayValidator:
-    """Orchestrates shadow and replay comparison between deterministic rules vs LLM pipeline."""
+def _group_metrics(trades: Sequence[ReplayTradeResult], key) -> Dict[str, Dict[str, Any]]:
+    grouped: Dict[str, List[ReplayTradeResult]] = defaultdict(list)
+    for t in trades:
+        grouped[str(key(t))].append(t)
+    return {name: calculate_experiment_metrics(items) for name, items in grouped.items()}
 
-    def __init__(self):
-        pass
 
-    def run_synthetic_shadow_test(self) -> Dict[str, Any]:
-        """Runs an offline deterministic vs LLM comparative replay on standardized setups."""
-        # Simulated trade outcomes across different market regimes
-        det_trades: List[ReplayTradeResult] = [
-            ReplayTradeResult("BTC", "PUMP_EXHAUSTION", "SHORT", 2.0, 1200, 0.1, 0.0, 0.03, 0.4, 2.2),
-            ReplayTradeResult("ETH", "PUMP_EXHAUSTION", "SHORT", -1.0, 500, 0.1, 0.0, 0.04, 1.2, 0.1),
-            ReplayTradeResult("SOL", "SUPPORT_PULLBACK", "LONG", 2.0, 2000, 0.1, 0.0, 0.02, 0.3, 2.5),
-            ReplayTradeResult("DOGE", "BREAKDOWN_RETEST", "SHORT", -1.0, 800, 0.1, 0.0, 0.05, 1.1, 0.2),
-            ReplayTradeResult("PEPE", "PUMP_EXHAUSTION", "SHORT", 2.0, 1500, 0.1, 0.0, 0.04, 0.5, 2.1),
-            ReplayTradeResult("XRP", "SUPPORT_PULLBACK", "LONG", -1.0, 700, 0.1, 0.0, 0.03, 1.3, 0.3),
-        ]
+def run_replay_report(trades: Sequence[ReplayTradeResult]) -> Dict[str, Any]:
+    """
+    Produces the Fase 3 report from a validated replay dataset. There is no
+    synthetic path: callers must supply real trades with provenance.
+    """
+    if not trades:
+        raise ReplayDatasetError("run_replay_report: refusing to report on an empty dataset")
 
-        # LLM pipeline filters out noisy breakdown and focuses on high-conviction exhaustion & pullbacks
-        llm_trades: List[ReplayTradeResult] = [
-            ReplayTradeResult("BTC", "PUMP_EXHAUSTION", "SHORT", 2.0, 1200, 0.1, 0.0, 0.03, 0.4, 2.2, ai_confidence=92.0),
-            ReplayTradeResult("SOL", "SUPPORT_PULLBACK", "LONG", 2.0, 2000, 0.1, 0.0, 0.02, 0.3, 2.5, ai_confidence=88.0),
-            ReplayTradeResult("PEPE", "PUMP_EXHAUSTION", "SHORT", 2.0, 1500, 0.1, 0.0, 0.04, 0.5, 2.1, ai_confidence=85.0),
-            ReplayTradeResult("XRP", "SUPPORT_PULLBACK", "LONG", -1.0, 700, 0.1, 0.0, 0.03, 1.3, 0.3, ai_confidence=74.0),
-        ]
-
-        det_metrics = calculate_experiment_metrics(det_trades)
-        llm_metrics = calculate_experiment_metrics(llm_trades)
-        calibrated = calibrate_confidence_buckets(llm_trades)
-
-        # Stratifications
-        playbooks = defaultdict(list)
-        directions = defaultdict(list)
-        for t in llm_trades:
-            playbooks[t.playbook].append(t)
-            directions[t.direction].append(t)
-
-        strat_pb = {pb: calculate_experiment_metrics(tr) for pb, tr in playbooks.items()}
-        strat_dir = {d: calculate_experiment_metrics(tr) for d, tr in directions.items()}
-
-        return {
-            "deterministic_baseline": det_metrics,
-            "llm_pipeline": llm_metrics,
-            "confidence_calibration": calibrated,
-            "stratification_by_playbook": strat_pb,
-            "stratification_by_direction": strat_dir,
-            "comparison": {
-                "expectancy_delta_r": round(llm_metrics["net_expectancy_r"] - det_metrics["net_expectancy_r"], 4),
-                "win_rate_delta": round(llm_metrics["win_rate"] - det_metrics["win_rate"], 4),
-                "profit_factor_delta": round(llm_metrics["profit_factor"] - det_metrics["profit_factor"], 4),
-            }
-        }
+    return {
+        "overall": calculate_experiment_metrics(trades),
+        "confidence_calibration": calibrate_confidence_buckets(trades),
+        "stratification_by_playbook": _group_metrics(trades, lambda t: t.playbook),
+        "stratification_by_direction": _group_metrics(trades, lambda t: t.direction),
+        "stratification_by_execution_path": _group_metrics(trades, lambda t: t.execution_path),
+        "stratification_by_fallback": _group_metrics(trades, lambda t: "FALLBACK" if t.is_fallback else "SUCCESS"),
+    }
 
 
 if __name__ == "__main__":
-    validator = ShadowReplayValidator()
-    res = validator.run_synthetic_shadow_test()
-    import json
-    print(json.dumps(res, indent=2))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fase 3 replay metrics (requires a real dataset)")
+    parser.add_argument("--dataset", required=True, help="Path to a JSON replay dataset")
+    parser.add_argument("--out", default=None, help="Optional path to write the JSON report")
+    args = parser.parse_args()
+
+    dataset = load_replay_dataset(args.dataset)
+    report = run_replay_report(dataset)
+    text = json.dumps(report, indent=2)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"Wrote replay report to {args.out}")
+    else:
+        print(text)
