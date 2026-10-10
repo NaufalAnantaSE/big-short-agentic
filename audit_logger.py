@@ -49,7 +49,13 @@ class AuditLogger:
         status: str,
         session_id: Optional[str] = None,
         stop_loss_price: Optional[float] = None,
-        take_profit_price: Optional[float] = None
+        take_profit_price: Optional[float] = None,
+        quote_ts: Optional[int] = None,
+        request_price: Optional[float] = None,
+        avg_fill_price: Optional[float] = None,
+        slippage: Optional[float] = None,
+        slippage_pct: Optional[float] = None,
+        fee: Optional[float] = None
     ):
         payload = {
             "symbol": symbol,
@@ -66,6 +72,18 @@ class AuditLogger:
             payload["stop_loss_price"] = stop_loss_price
         if take_profit_price is not None:
             payload["take_profit_price"] = take_profit_price
+        if quote_ts is not None:
+            payload["quote_ts"] = quote_ts
+        if request_price is not None:
+            payload["request_price"] = request_price
+        if avg_fill_price is not None:
+            payload["avg_fill_price"] = avg_fill_price
+        if slippage is not None:
+            payload["slippage"] = slippage
+        if slippage_pct is not None:
+            payload["slippage_pct"] = slippage_pct
+        if fee is not None:
+            payload["fee"] = fee
         cls.log_event("ORDER_SUBMISSION", payload, session_id=session_id)
 
     @classmethod

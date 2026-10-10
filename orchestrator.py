@@ -288,6 +288,71 @@ class SessionOrchestrator:
             elif not gate_ok:
                 veto_reason = f"hard_gate_rejected_{pos_dir}:{','.join(gate_reasons)}"
 
+        # P0-2: Fresh quote revalidation and executable price re-sizing before order execution
+        executable_price = cand.last_price
+        quote_ts = int(time.time() * 1000)
+        if (is_short_intent or is_long_intent) and not veto_reason:
+            fresh_quote = None
+            try:
+                fresh_depth = self.client.get_depth(cand.symbol, limit=5)
+                if fresh_depth and isinstance(fresh_depth, dict):
+                    bids = fresh_depth.get("bids") or []
+                    asks = fresh_depth.get("asks") or []
+                    if bids and asks and len(bids[0]) >= 2 and len(asks[0]) >= 2:
+                        b1 = float(bids[0][0])
+                        a1 = float(asks[0][0])
+                        q_ts = fresh_depth.get("T") or int(time.time() * 1000)
+                        if b1 > 0 and a1 > 0:
+                            fresh_quote = {"bid1": b1, "ask1": a1, "quote_ts": q_ts}
+            except Exception:
+                pass
+
+            if fresh_quote is None and getattr(cand, "bid1", 0) > 0 and getattr(cand, "ask1", 0) > 0:
+                fresh_quote = {
+                    "bid1": cand.bid1,
+                    "ask1": cand.ask1,
+                    "quote_ts": int(time.time() * 1000)
+                }
+
+            if fresh_quote is None:
+                veto_reason = "quote_unavailable_at_execution"
+            else:
+                bid1 = fresh_quote["bid1"]
+                ask1 = fresh_quote["ask1"]
+                quote_ts = fresh_quote["quote_ts"]
+                executable_price = ask1 if pos_dir == "LONG" else bid1
+                spread_pct = ((ask1 - bid1) / bid1 * 100.0) if bid1 > 0 else 999.0
+                drift_pct = abs(executable_price - cand.last_price) / cand.last_price * 100.0 if cand.last_price > 0 else 999.0
+
+                if drift_pct > 0.50:
+                    veto_reason = f"price_drift_exceeded:{drift_pct:.2f}%>0.50%"
+                elif spread_pct > self.config.max_spread_pct:
+                    veto_reason = f"spread_too_wide_at_execution:{spread_pct:.2f}%>{self.config.max_spread_pct}%"
+                else:
+                    sizing = SizingCalculator.calculate_lot(
+                        symbol=cand.symbol,
+                        margin_usdt=margin_per_pos,
+                        target_leverage=effective_target_lev,
+                        current_price=executable_price,
+                        contract_info=cand.contract_info,
+                        max_allowed_leverage=20,
+                        direction=pos_dir,
+                        atr=atr_val,
+                        target_rr=target_rr
+                    )
+                    if not sizing.is_valid:
+                        veto_reason = f"resizing_invalid:{sizing.rejection_reason}"
+                    else:
+                        execution_report["sizing"] = sizing.model_dump()
+                        execution_report["stop_loss_price"] = sizing.stop_loss_price
+                        execution_report["take_profit_price"] = sizing.take_profit_price
+                        execution_report["sl_percent"] = sizing.sl_percent
+                        execution_report["tp_percent"] = sizing.tp_percent
+                        execution_report["risk_amount_usdt"] = sizing.risk_amount_usdt
+                        execution_report["potential_profit_usdt"] = sizing.potential_profit_usdt
+                        execution_report["request_price"] = executable_price
+                        execution_report["quote_ts"] = quote_ts
+
         if veto_reason:
             execution_report["veto_reason"] = veto_reason
             AuditLogger.log_event("TRADE_EXECUTION_VETO", {
@@ -319,6 +384,11 @@ class SessionOrchestrator:
                 execution_report["executed"] = False
                 execution_report["dry_run"] = True
                 execution_report["client_order_id"] = client_order_id
+                execution_report["request_price"] = executable_price
+                execution_report["avg_fill_price"] = executable_price
+                execution_report["slippage"] = 0.0
+                execution_report["slippage_pct"] = 0.0
+                execution_report["quote_ts"] = quote_ts
                 tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
                 execution_report["message"] = (
                     f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
@@ -353,12 +423,26 @@ class SessionOrchestrator:
                         stop_loss_price=sizing.stop_loss_price,
                         take_profit_price=sizing.take_profit_price
                     )
-                    order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
+                    safe_res = order_res or {}
+                    order_data = (safe_res.get("order") if isinstance(safe_res.get("order"), dict) else safe_res) or {}
+                    order_id_raw = order_data.get("orderId") or safe_res.get("orderId") or client_order_id
                     order_id_str = str(order_id_raw)
+                    order_status = order_data.get("status", "FILLED")
+                    raw_avg = order_data.get("avgPrice") or order_data.get("price")
+                    actual_avg_price = float(raw_avg) if raw_avg and float(raw_avg) > 0 else executable_price
+                    slippage = actual_avg_price - executable_price
+                    slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
+
                     execution_report["executed"] = True
                     execution_report["dry_run"] = False
                     execution_report["client_order_id"] = client_order_id
                     execution_report["order_id"] = order_id_str
+                    execution_report["request_price"] = executable_price
+                    execution_report["avg_fill_price"] = actual_avg_price
+                    execution_report["slippage"] = slippage
+                    execution_report["slippage_pct"] = slippage_pct
+                    execution_report["quote_ts"] = quote_ts
+                    execution_report["status"] = order_status
                     if self.current_session:
                         self.current_session.filled_count += 1
                         self.current_session.executed_symbols.append(cand.symbol)
@@ -370,13 +454,18 @@ class SessionOrchestrator:
                         position_side=target_pos_side,
                         order_type="MARKET",
                         quantity=sizing.quantity,
-                        price=cand.last_price,
+                        price=executable_price,
                         client_order_id=client_order_id,
                         order_id=order_id_str,
-                        status="FILLED",
+                        status=order_status,
                         session_id=session_id,
                         stop_loss_price=sizing.stop_loss_price,
-                        take_profit_price=sizing.take_profit_price
+                        take_profit_price=sizing.take_profit_price,
+                        quote_ts=quote_ts,
+                        request_price=executable_price,
+                        avg_fill_price=actual_avg_price,
+                        slippage=slippage,
+                        slippage_pct=slippage_pct
                     )
                 except BingXAPIError as e:
                     execution_report["executed"] = False

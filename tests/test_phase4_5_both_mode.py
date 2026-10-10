@@ -36,8 +36,8 @@ def test_both_direction_mode_allows_both_short_and_long_entries(mocker):
         last_price=5.0,
         price_change_percent=4.0,
         volume_24h_usdt=800000.0,
-        bid1=4.99,
-        ask1=5.01,
+        bid1=4.995,
+        ask1=5.005,
         spread_percent=0.2,
         contract_info={"quantityPrecision": 1, "tradeMinQuantity": "0.1", "tradeMinUSDT": "5.0", "maxLongLeverage": 20}
     )
