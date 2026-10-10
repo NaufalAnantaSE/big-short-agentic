@@ -81,7 +81,24 @@ class SessionOrchestrator:
         self.ai = AIEvaluator(config)
         self.watchlist = WatchlistManager()
         self.current_session: Optional[SessionState] = None
-        self._session_lock = threading.Lock()
+        self._session_lock = threading.RLock()
+
+    def _is_session_valid_for_execution(self, session_id: str, generation_token: str) -> tuple[bool, str]:
+        """
+        Atomically inspects session status and generation token under _session_lock.
+        Returns (is_valid, veto_reason).
+        """
+        with self._session_lock:
+            if not self.current_session:
+                return False, "SESSION_TERMINATED:NONE"
+            if self.current_session.status == "TERMINATED":
+                return False, f"SESSION_TERMINATED:{self.current_session.status}"
+            if self.current_session.session_id != session_id:
+                return False, f"SESSION_ID_MISMATCH:{self.current_session.session_id}!={session_id}"
+            curr_gen = getattr(self.current_session, "generation_token", "")
+            if curr_gen != generation_token:
+                return False, "SESSION_GENERATION_MISMATCH"
+            return True, ""
 
     def start_session(
         self,
@@ -399,14 +416,10 @@ class SessionOrchestrator:
                         execution_report["request_price"] = executable_price
                         execution_report["quote_ts"] = quote_ts
 
-        # P0-4: Session-stop race protection
-        if not self.current_session or self.current_session.status == "TERMINATED":
-            curr_st = self.current_session.status if self.current_session else "NONE"
-            veto_reason = f"SESSION_TERMINATED:{curr_st}"
-        elif getattr(self.current_session, "generation_token", "") != session_gen:
-            veto_reason = "SESSION_GENERATION_MISMATCH"
-        elif self.current_session.session_id != session_id:
-            veto_reason = "SESSION_ID_MISMATCH"
+        # P0-4 & F-02: Pre-execution session status and generation check
+        valid_sess, sess_veto = self._is_session_valid_for_execution(session_id, session_gen)
+        if not valid_sess:
+            veto_reason = sess_veto
 
         if veto_reason:
             execution_report["veto_reason"] = veto_reason
@@ -435,24 +448,36 @@ class SessionOrchestrator:
             client_order_id = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
             if effective_dry_run:
-                tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
-                execution_report["executed"] = False
-                execution_report["dry_run"] = True
-                execution_report["client_order_id"] = client_order_id
-                execution_report["request_price"] = executable_price
-                execution_report["avg_fill_price"] = executable_price
-                execution_report["slippage"] = 0.0
-                execution_report["slippage_pct"] = 0.0
-                execution_report["quote_ts"] = quote_ts
-                tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
-                execution_report["message"] = (
-                    f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
-                    f"Submit {target_pos_side} MARKET order: {sizing.quantity} {cand.symbol}{tpsl_info}"
-                )
-                if self.current_session:
-                    self.current_session.filled_count += 1
-                    self.current_session.executed_symbols.append(cand.symbol)
-                placed = True
+                with self._session_lock:
+                    valid_sess, sess_veto = self._is_session_valid_for_execution(session_id, session_gen)
+                    if not valid_sess:
+                        execution_report["veto_reason"] = sess_veto
+                        AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                            "symbol": cand.symbol,
+                            "ai_decision": ai_res.decision,
+                            "target_direction": pos_dir,
+                            "veto_reason": sess_veto
+                        }, session_id=session_id)
+                        return execution_report, tokens_used, False
+
+                    tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
+                    execution_report["executed"] = False
+                    execution_report["dry_run"] = True
+                    execution_report["client_order_id"] = client_order_id
+                    execution_report["request_price"] = executable_price
+                    execution_report["avg_fill_price"] = executable_price
+                    execution_report["slippage"] = 0.0
+                    execution_report["slippage_pct"] = 0.0
+                    execution_report["quote_ts"] = quote_ts
+                    tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
+                    execution_report["message"] = (
+                        f"{tag} Pre-flight: Set leverage to {sizing.effective_leverage}x | "
+                        f"Submit {target_pos_side} MARKET order: {sizing.quantity} {cand.symbol}{tpsl_info}"
+                    )
+                    if self.current_session:
+                        self.current_session.filled_count += 1
+                        self.current_session.executed_symbols.append(cand.symbol)
+                    placed = True
             else:
                 try:
                     self.client.set_leverage(
@@ -468,60 +493,73 @@ class SessionOrchestrator:
                         session_id=session_id
                     )
 
-                    order_res = self.client.place_order(
-                        symbol=cand.symbol,
-                        side=target_order_side,
-                        position_side=target_pos_side,
-                        order_type="MARKET",
-                        quantity=sizing.quantity,
-                        client_order_id=client_order_id,
-                        stop_loss_price=sizing.stop_loss_price,
-                        take_profit_price=sizing.take_profit_price
-                    )
-                    safe_res = order_res or {}
-                    order_data = (safe_res.get("order") if isinstance(safe_res.get("order"), dict) else safe_res) or {}
-                    order_id_raw = order_data.get("orderId") or safe_res.get("orderId") or client_order_id
-                    order_id_str = str(order_id_raw)
-                    order_status = order_data.get("status", "FILLED")
-                    raw_avg = order_data.get("avgPrice") or order_data.get("price")
-                    actual_avg_price = float(raw_avg) if raw_avg and float(raw_avg) > 0 else executable_price
-                    slippage = actual_avg_price - executable_price
-                    slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
+                    # CRITICAL (F-02): Atomic lock and pre-submission check right before place_order
+                    with self._session_lock:
+                        valid_sess, sess_veto = self._is_session_valid_for_execution(session_id, session_gen)
+                        if not valid_sess:
+                            execution_report["veto_reason"] = sess_veto
+                            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                "symbol": cand.symbol,
+                                "ai_decision": ai_res.decision,
+                                "target_direction": pos_dir,
+                                "veto_reason": sess_veto
+                            }, session_id=session_id)
+                            return execution_report, tokens_used, False
 
-                    execution_report["executed"] = True
-                    execution_report["dry_run"] = False
-                    execution_report["client_order_id"] = client_order_id
-                    execution_report["order_id"] = order_id_str
-                    execution_report["request_price"] = executable_price
-                    execution_report["avg_fill_price"] = actual_avg_price
-                    execution_report["slippage"] = slippage
-                    execution_report["slippage_pct"] = slippage_pct
-                    execution_report["quote_ts"] = quote_ts
-                    execution_report["status"] = order_status
-                    if self.current_session:
-                        self.current_session.filled_count += 1
-                        self.current_session.executed_symbols.append(cand.symbol)
-                    placed = True
+                        order_res = self.client.place_order(
+                            symbol=cand.symbol,
+                            side=target_order_side,
+                            position_side=target_pos_side,
+                            order_type="MARKET",
+                            quantity=sizing.quantity,
+                            client_order_id=client_order_id,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price
+                        )
+                        safe_res = order_res or {}
+                        order_data = (safe_res.get("order") if isinstance(safe_res.get("order"), dict) else safe_res) or {}
+                        order_id_raw = order_data.get("orderId") or safe_res.get("orderId") or client_order_id
+                        order_id_str = str(order_id_raw)
+                        order_status = order_data.get("status", "FILLED")
+                        raw_avg = order_data.get("avgPrice") or order_data.get("price")
+                        actual_avg_price = float(raw_avg) if raw_avg and float(raw_avg) > 0 else executable_price
+                        slippage = actual_avg_price - executable_price
+                        slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
 
-                    AuditLogger.log_order_submission(
-                        symbol=cand.symbol,
-                        side=target_order_side,
-                        position_side=target_pos_side,
-                        order_type="MARKET",
-                        quantity=sizing.quantity,
-                        price=executable_price,
-                        client_order_id=client_order_id,
-                        order_id=order_id_str,
-                        status=order_status,
-                        session_id=session_id,
-                        stop_loss_price=sizing.stop_loss_price,
-                        take_profit_price=sizing.take_profit_price,
-                        quote_ts=quote_ts,
-                        request_price=executable_price,
-                        avg_fill_price=actual_avg_price,
-                        slippage=slippage,
-                        slippage_pct=slippage_pct
-                    )
+                        execution_report["executed"] = True
+                        execution_report["dry_run"] = False
+                        execution_report["client_order_id"] = client_order_id
+                        execution_report["order_id"] = order_id_str
+                        execution_report["request_price"] = executable_price
+                        execution_report["avg_fill_price"] = actual_avg_price
+                        execution_report["slippage"] = slippage
+                        execution_report["slippage_pct"] = slippage_pct
+                        execution_report["quote_ts"] = quote_ts
+                        execution_report["status"] = order_status
+                        if self.current_session:
+                            self.current_session.filled_count += 1
+                            self.current_session.executed_symbols.append(cand.symbol)
+                        placed = True
+
+                        AuditLogger.log_order_submission(
+                            symbol=cand.symbol,
+                            side=target_order_side,
+                            position_side=target_pos_side,
+                            order_type="MARKET",
+                            quantity=sizing.quantity,
+                            price=executable_price,
+                            client_order_id=client_order_id,
+                            order_id=order_id_str,
+                            status=order_status,
+                            session_id=session_id,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price,
+                            quote_ts=quote_ts,
+                            request_price=executable_price,
+                            avg_fill_price=actual_avg_price,
+                            slippage=slippage,
+                            slippage_pct=slippage_pct
+                        )
                 except BingXAPIError as e:
                     execution_report["executed"] = False
                     execution_report["error"] = str(e)
@@ -710,16 +748,12 @@ class SessionOrchestrator:
                     )
 
                     if sizing.is_valid:
-                        # P0-4: Session-stop race protection
-                        if (
-                            not self.current_session
-                            or self.current_session.status == "TERMINATED"
-                            or getattr(self.current_session, "generation_token", "") != cycle_gen
-                            or self.current_session.session_id != session_id
-                        ):
+                        # P0-4 & F-02: Pre-execution session status and generation check
+                        valid_sess, veto_reason = self._is_session_valid_for_execution(session_id, cycle_gen)
+                        if not valid_sess:
                             AuditLogger.log_event("TRADE_EXECUTION_VETO", {
                                 "symbol": entry.symbol,
-                                "veto_reason": "SESSION_TERMINATED_AT_WATCHLIST_TRIGGER"
+                                "veto_reason": f"WATCHLIST_STOP_RACE:{veto_reason}"
                             }, session_id=session_id)
                             break
 
@@ -747,20 +781,29 @@ class SessionOrchestrator:
                         }
 
                         if effective_dry_run:
-                            tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
-                            w_exec_report["executed"] = False
-                            w_exec_report["dry_run"] = True
-                            w_exec_report["client_order_id"] = client_order_id
-                            tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
-                            w_exec_report["message"] = (
-                                f"{tag} [WATCHLIST-REVERSAL] Set leverage {sizing.effective_leverage}x | "
-                                f"Submit {target_pos_side} MARKET order: {sizing.quantity} {entry.symbol}{tpsl_info}"
-                            )
-                            self.current_session.filled_count += 1
-                            self.current_session.executed_symbols.append(entry.symbol)
-                            self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
-                            available_slots -= 1
-                            cycle_results.append(w_exec_report)
+                            with self._session_lock:
+                                valid_sess, veto_reason = self._is_session_valid_for_execution(session_id, cycle_gen)
+                                if not valid_sess:
+                                    AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                        "symbol": entry.symbol,
+                                        "veto_reason": f"WATCHLIST_STOP_RACE:{veto_reason}"
+                                    }, session_id=session_id)
+                                    break
+
+                                tag = "[LOCAL-PAPER]" if is_local_paper else "[DRY-RUN]"
+                                w_exec_report["executed"] = False
+                                w_exec_report["dry_run"] = True
+                                w_exec_report["client_order_id"] = client_order_id
+                                tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
+                                w_exec_report["message"] = (
+                                    f"{tag} [WATCHLIST-REVERSAL] Set leverage {sizing.effective_leverage}x | "
+                                    f"Submit {target_pos_side} MARKET order: {sizing.quantity} {entry.symbol}{tpsl_info}"
+                                )
+                                self.current_session.filled_count += 1
+                                self.current_session.executed_symbols.append(entry.symbol)
+                                self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
+                                available_slots -= 1
+                                cycle_results.append(w_exec_report)
                         else:
                             try:
                                 self.client.set_leverage(
@@ -774,29 +817,40 @@ class SessionOrchestrator:
                                     side=target_pos_side,
                                     session_id=self.current_session.session_id
                                 )
-                                order_res = self.client.place_order(
-                                    symbol=entry.symbol,
-                                    side=target_order_side,
-                                    position_side=target_pos_side,
-                                    order_type="MARKET",
-                                    quantity=sizing.quantity,
-                                    client_order_id=client_order_id,
-                                    stop_loss_price=sizing.stop_loss_price,
-                                    take_profit_price=sizing.take_profit_price
-                                )
-                                order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
-                                order_id_str = str(order_id_raw)
-                                w_exec_report["executed"] = True
-                                w_exec_report["dry_run"] = False
-                                w_exec_report["client_order_id"] = client_order_id
-                                w_exec_report["order_id"] = order_id_str
-                                self.current_session.filled_count += 1
-                                self.current_session.executed_symbols.append(entry.symbol)
-                                self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
-                                available_slots -= 1
 
-                                AuditLogger.log_order_submission(
-                                    symbol=entry.symbol,
+                                # CRITICAL (F-02): Atomic lock and pre-submission check right before place_order
+                                with self._session_lock:
+                                    valid_sess, veto_reason = self._is_session_valid_for_execution(session_id, cycle_gen)
+                                    if not valid_sess:
+                                        AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                            "symbol": entry.symbol,
+                                            "veto_reason": f"WATCHLIST_STOP_RACE:{veto_reason}"
+                                        }, session_id=session_id)
+                                        break
+
+                                    order_res = self.client.place_order(
+                                        symbol=entry.symbol,
+                                        side=target_order_side,
+                                        position_side=target_pos_side,
+                                        order_type="MARKET",
+                                        quantity=sizing.quantity,
+                                        client_order_id=client_order_id,
+                                        stop_loss_price=sizing.stop_loss_price,
+                                        take_profit_price=sizing.take_profit_price
+                                    )
+                                    order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
+                                    order_id_str = str(order_id_raw)
+                                    w_exec_report["executed"] = True
+                                    w_exec_report["dry_run"] = False
+                                    w_exec_report["client_order_id"] = client_order_id
+                                    w_exec_report["order_id"] = order_id_str
+                                    self.current_session.filled_count += 1
+                                    self.current_session.executed_symbols.append(entry.symbol)
+                                    self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
+                                    available_slots -= 1
+
+                                    AuditLogger.log_order_submission(
+                                        symbol=entry.symbol,
                                     side=target_order_side,
                                     position_side=target_pos_side,
                                     order_type="MARKET",
