@@ -12,7 +12,13 @@ from sizing import SizingCalculator, SizingResult
 from scanner import MarketScanner, CandidatePair
 from ai_evaluator import AIEvaluator, AIEvaluationResult, BatchTriageResult, TriageCandidate
 from audit_logger import AuditLogger
-from market_features import build_candidate_features, hard_gate
+from market_features import (
+    build_candidate_features,
+    hard_gate,
+    _closed_rows,
+    PRODUCTION_CANDLE_BUFFER_MS,
+    PRODUCTION_KLINE_LIMIT,
+)
 from contracts import Environment, ExecutionMode, DirectionMode, ExitPolicy, TradeAction, PlaybookType
 from strategy_playbook import evaluate_playbooks, PlaybookMatch
 from watchlist_manager import WatchlistManager
@@ -636,7 +642,7 @@ class SessionOrchestrator:
                 continue
 
             try:
-                w_klines = self.client.get_klines(entry.symbol, interval="15m", limit=15)
+                w_klines = self.client.get_klines(entry.symbol, interval="15m", limit=PRODUCTION_KLINE_LIMIT)
                 w_depth = self.client.get_depth(entry.symbol, limit=5)
                 bids = w_depth.get("bids", []) if isinstance(w_depth, dict) else []
                 asks = w_depth.get("asks", []) if isinstance(w_depth, dict) else []
@@ -850,8 +856,15 @@ class SessionOrchestrator:
                 break
 
             try:
-                klines = self.client.get_klines(cand.symbol, interval="15m", limit=10)
-                closes = [k.get("close") for k in klines if "close" in k]
+                raw_klines = self.client.get_klines(cand.symbol, interval="15m", limit=PRODUCTION_KLINE_LIMIT)
+                # F-01: never feed the still-forming bar to the model or to scoring.
+                klines = _closed_rows(
+                    raw_klines,
+                    now_ms=int(time.time() * 1000),
+                    interval="15m",
+                    buffer_ms=PRODUCTION_CANDLE_BUFFER_MS,
+                )
+                closes = [k.get("close") for k in klines if k.get("close") is not None]
             except Exception:
                 closes = []
 

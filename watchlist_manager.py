@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from client import BingXClient
 from audit_logger import AuditLogger
-from market_features import _closed_rows
+from market_features import _closed_rows, PRODUCTION_CANDLE_BUFFER_MS
 
 
 class WatchlistEntry(BaseModel):
@@ -233,11 +233,16 @@ class WatchlistManager:
         klines_15m: List[Dict[str, Any]],
         current_price: float,
         current_spread_pct: float,
-        now_ms: Optional[int] = None
+        now_ms: Optional[int] = None,
+        buffer_ms: int = PRODUCTION_CANDLE_BUFFER_MS
     ) -> Tuple[bool, Optional[str], ReversalTriggerResult]:
         """
         Evaluates strict deterministic reversal confirmation and eviction conditions.
         Returns: (should_evict, eviction_reason, trigger_result)
+
+        F-01: buffer_ms defaults to the production value so the still-forming 15m bar is
+        never used for reversal confirmation. Pass 0 only in tests that supply synthetic
+        bars without exchange timestamps.
         """
         now = time.time()
         entry.last_checked_at = now
@@ -259,7 +264,7 @@ class WatchlistManager:
 
         has_timestamps = any(c.get("time") is not None or c.get("timestamp") is not None for c in (klines_15m or []))
         if has_timestamps:
-            closed_klines = _closed_rows(klines_15m, now_ms=effective_now_ms, interval="15m")
+            closed_klines = _closed_rows(klines_15m, now_ms=effective_now_ms, interval="15m", buffer_ms=buffer_ms)
         else:
             closed_klines = list(klines_15m or [])
 
