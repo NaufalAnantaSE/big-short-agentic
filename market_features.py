@@ -158,6 +158,19 @@ def _calculate_true_range(high: float, low: float, prev_close: float | None = No
     return max(hl, abs(high - prev_close), abs(low - prev_close))
 
 
+# F-01: production closed-candle buffer. A bar whose close timestamp is <= now can still be
+# mutating under exchange clock skew / network latency; production must only consume bars
+# closed at least this long ago.
+PRODUCTION_CANDLE_BUFFER_MS = 5_000
+
+# F-08: EMA50 requires at least this many bars. Below it the trend is reported invalid
+# instead of being computed from a silently substituted mean.
+EMA_WARMUP_BARS = 50
+
+# Production kline depth must cover the EMA warmup plus the analysis window.
+PRODUCTION_KLINE_LIMIT = 120
+
+
 def _timeframe_features(
     rows: Iterable[Dict[str, Any]],
     now_ms: int,
@@ -399,10 +412,12 @@ def _calculate_rsi(closes: List[float], period: int = 14) -> float:
     return round(100.0 - (100.0 / (1.0 + rs)), 2)
 
 
-def _detect_rsi_divergence(closed_rows: List[Dict[str, float]], period: int = 14) -> str:
+def _detect_rsi_divergence_unaligned(closed_rows: List[Dict[str, float]], period: int = 14) -> str:
     """
-    Detects regular divergence between price and RSI in the recent window.
-    Returns 'BEARISH_DIV', 'BULLISH_DIV', or 'NONE'.
+    BASELINE (pre-F-08) divergence detector, retained ONLY for baseline-vs-fixed replay
+    comparison. It compares the current bar against the MAXIMUM price and the MAXIMUM RSI
+    of the previous slice independently, so the two extremes may come from different bars.
+    That is the defect F-08 describes. Do not use for new decisions.
     """
     if len(closed_rows) < 8:
         return "NONE"
@@ -431,13 +446,84 @@ def _detect_rsi_divergence(closed_rows: List[Dict[str, float]], period: int = 14
     min_prev_price = min(prev_prices)
     min_prev_rsi = min(prev_rsis)
 
-    # Bearish Divergence: Price higher than previous peak, but RSI lower than previous peak (RSI >= 58)
     if curr_price >= max_prev_price and curr_rsi < max_prev_rsi and curr_rsi >= 58.0:
         return "BEARISH_DIV"
 
-    # Bullish Divergence: Price lower than previous trough, but RSI higher than previous trough (RSI <= 42)
     if curr_price <= min_prev_price and curr_rsi > min_prev_rsi and curr_rsi <= 42.0:
         return "BULLISH_DIV"
+
+    return "NONE"
+
+
+def _pivot_indices(values: List[float], span: int, kind: str) -> List[int]:
+    """Indices whose value is the strict extreme of the surrounding [i-span, i+span] window."""
+    out: List[int] = []
+    n = len(values)
+    for i in range(span, n - span):
+        window = values[i - span:i + span + 1]
+        if kind == "high":
+            if values[i] == max(window) and values[i] > min(window):
+                out.append(i)
+        else:
+            if values[i] == min(window) and values[i] < max(window):
+                out.append(i)
+    return out
+
+
+def _detect_rsi_divergence(
+    closed_rows: List[Dict[str, float]],
+    period: int = 14,
+    pivot_span: int = 2,
+    window: int = 40,
+    bearish_floor: float = 55.0,
+    bullish_ceiling: float = 45.0
+) -> str:
+    """
+    F-08: Timestamp-aligned divergence.
+
+    Compares the current bar against the MOST RECENT PRICE PIVOT, using the RSI value
+    AT THAT SAME INDEX. The prior implementation compared the current bar to the maximum
+    price and the maximum RSI of the previous slice independently, so an earlier high-RSI
+    bar could make momentum look divergent even when the actual price pivot showed
+    strengthening momentum. That produced false exhaustion signals.
+    """
+    if len(closed_rows) < period + 3:
+        return "NONE"
+
+    rows = closed_rows[-window:]
+    closes = [r["close"] for r in rows]
+    n = len(closes)
+    if n < period + 3:
+        return "NONE"
+
+    # Index-aligned RSI series: rsi[i] is computed from closes[0..i].
+    rsis: List[float | None] = []
+    for i in range(n):
+        if i < 2:
+            rsis.append(None)
+        else:
+            rsis.append(_calculate_rsi(closes[:i + 1], period=min(period, i)))
+
+    curr_price = closes[-1]
+    curr_rsi = rsis[-1]
+    if curr_rsi is None:
+        return "NONE"
+
+    # Pivots must be confirmed bars, so the still-forming last bar is excluded.
+    highs = _pivot_indices(closes[:-1], pivot_span, "high")
+    lows = _pivot_indices(closes[:-1], pivot_span, "low")
+
+    if highs:
+        p = highs[-1]
+        p_rsi = rsis[p]
+        if p_rsi is not None and curr_price > closes[p] and curr_rsi < p_rsi and curr_rsi >= bearish_floor:
+            return "BEARISH_DIV"
+
+    if lows:
+        p = lows[-1]
+        p_rsi = rsis[p]
+        if p_rsi is not None and curr_price < closes[p] and curr_rsi > p_rsi and curr_rsi <= bullish_ceiling:
+            return "BULLISH_DIV"
 
     return "NONE"
 
@@ -525,6 +611,12 @@ def _calculate_ema(closes: List[float], period: int) -> float:
 
 
 def _ema_trend_analysis(closed_rows: List[Dict[str, float]], min_bars: int = 3) -> Dict[str, Any]:
+    """
+    EMA trend classification.
+
+    `min_bars` gates validity. Production must pass EMA_WARMUP_BARS (50) so an EMA50
+    computed from too few bars is reported invalid instead of being silently accepted.
+    """
     if not closed_rows or len(closed_rows) < min_bars:
         return {
             "valid": False,
@@ -566,7 +658,8 @@ def compute_market_features(
     max_age_ms: int = 120_000,
     max_funding_age_ms: int = 43_200_000,
     buffer_ms: int = 0,
-    min_history: int = 3
+    min_history: int = 3,
+    ema_min_bars: int = EMA_WARMUP_BARS
 ) -> Dict[str, Any]:
     timeframes = {
         tf: _timeframe_features(rows, now_ms, interval=tf, buffer_ms=buffer_ms, min_history=min_history)
@@ -607,7 +700,7 @@ def compute_market_features(
     # Phase 2 Indicators: RSI Divergence, Bollinger Bands, EMA Trend
     rsi = _rsi_analysis(closed_15m, closed_1h)
     bollinger = _bollinger_analysis(closed_15m or closed_1h)
-    ema_trend = _ema_trend_analysis(closed_15m or closed_1h)
+    ema_trend = _ema_trend_analysis(closed_15m or closed_1h, min_bars=ema_min_bars)
 
     return {
         "fresh": fresh,
@@ -681,9 +774,25 @@ def hard_gate(
 
 
 def build_candidate_features(client: Any, symbol: str, now_ms: int | None = None) -> Dict[str, Any]:
+    """
+    Production feature builder.
+
+    F-01: applies PRODUCTION_CANDLE_BUFFER_MS so the still-forming bar is never consumed.
+    F-08: requests PRODUCTION_KLINE_LIMIT bars so the EMA50 warmup is genuinely satisfied.
+    """
     import time
     now = now_ms or int(time.time() * 1000)
-    candles = {tf: client.get_klines(symbol, interval=tf, limit=30) for tf in ("1m", "15m", "1h")}
+    candles = {
+        tf: client.get_klines(symbol, interval=tf, limit=PRODUCTION_KLINE_LIMIT)
+        for tf in ("1m", "15m", "1h")
+    }
     funding = client._request("GET", "/openApi/swap/v2/quote/premiumIndex", {"symbol": symbol}, signed=False)
     oi = client._request("GET", "/openApi/swap/v2/quote/openInterest", {"symbol": symbol}, signed=False)
-    return compute_market_features(candles, funding, oi, client.get_depth(symbol, limit=5), now)
+    return compute_market_features(
+        candles,
+        funding,
+        oi,
+        client.get_depth(symbol, limit=5),
+        now,
+        buffer_ms=PRODUCTION_CANDLE_BUFFER_MS,
+    )
