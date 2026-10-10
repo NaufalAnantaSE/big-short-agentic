@@ -139,7 +139,11 @@ Anti-reentry terlihat pada evaluasi direct; paritas pada watchlist dan pemulihan
 
 Tindak lanjut: integrasikan outcome yang teratribusi ke sesi, deduplikasi event, persistence, batas pergantian hari, serta restart recovery. Uji loss beruntun dari event fill sampai entry benar-benar berhenti.
 
-### F-07 — Ledger lifecycle dan equity masih parsial; leverage memakai key keliru
+### F-07 — Ledger lifecycle dan equity masih parsial; leverage memakai key keliru — **PARTIAL FIX (`89936f6`)**
+
+Sub-issue leverage **SUDAH DIPERBAIKI** pada `89936f6`: tenant sekarang memakai helper `_resolve_effective_leverage()` yang membaca key `effective_leverage` (output nyata `SizingCalculator`), dengan fallback ke leverage sesi hanya bila nilai tidak ada/tidak valid. Regression: `tests/test_f07_effective_leverage.py` (3 test, RED → GREEN).
+
+Sisa yang **belum** diperbaiki:
 
 Bukti: `db.py:270`, `457` dan helper query berikutnya; `tenant_manager.py:704–729`; `sizing.py:10`.
 
@@ -175,6 +179,17 @@ MAE/MFE adalah angka input, bukan hasil pengukuran lintasan harga. Stratifikasi 
 
 Tindak lanjut: tempatkan hasil sintetis sebagai fixture pengujian saja. Bangun replay opportunity set nyata yang sama, provenance keputusan/outcome, cost accounting, dan holdout sebelum laporan eksperimen diterima.
 
+**SUDAH DIBUANG (`e5fe5dc`).** Sesuai arahan Naufal, angka outcome hardcoded tidak lagi hanya dilabeli — seluruh jalur sintetis dihapus dari modul:
+
+- `ShadowReplayValidator` dan `run_synthetic_shadow_test()` dihilangkan total.
+- Dua daftar trade hardcoded (baseline & "LLM") dihapus.
+- Harness sekarang wajib memuat dataset replay nyata via `load_replay_dataset(path)` dan **fail-closed** (`ReplayDatasetError`) bila file hilang, kosong, malformed, field wajib absen, arah tidak dikenal, atau nilai non-numerik.
+- Stratifikasi diperluas: playbook, arah, **execution path**, dan **fallback**.
+- Ada guard test `test_no_synthetic_result_path_remains()` yang gagal bila entry point sintetis dimasukkan kembali.
+- Angka nol pada docstring hanya contoh bentuk record, bukan hasil. Regression: `tests/test_fase3_shadow_replay_validator.py` (11 test).
+
+Catatan: konversi fee/slippage/AI-cost menjadi R masih belum dilakukan; itu tetap bagian dari remediasi Fase 3, bukan sesuatu yang dianggap selesai.
+
 ### F-10 — Test hijau belum memenuhi disiplin acceptance
 
 Bukti: test divergence yang permisif; test EMA memakai argumen berbeda dari production caller; test risiko mengisi state langsung; `tests/conftest.py:12–30`.
@@ -207,7 +222,66 @@ Owner yang diusulkan: Hermes untuk implementasi; Muse untuk review independen. D
 
 **Verdict:** source code telah dipush, tetapi readiness live-money belum terpenuhi. Jangan memakai hasil sintetis, title commit, test count, atau laporan historis sebagai pengganti bukti acceptance.
 
-## 8. Sumber dan provenance
+## 9. Analisis prioritas: apa yang paling mungkin menjelaskan 4 SL beruntun?
+
+Pertanyaan Naufal: dari 10 temuan, mana yang paling mungkin menjelaskan 4 SL beruntun sesi `bx_sess_1791579205_ab6bff` — atau semuanya variance?
+
+Jawaban ini memakai bukti dari `logs/audit.jsonl` (1.291 baris untuk sesi tersebut), bukan opini. Batas: log audit **tidak** merekam event exit/close, jadi identifikasi "4 SL" bersumber dari [[Audit Komprehensif Finansial dan Teknis Paper Trading 4 Jam VST]], bukan dari log ini.
+
+### 9.1 Bukti mentah yang relevan
+
+Event yang terekam untuk sesi ini:
+
+| Event | Jumlah |
+|---|---|
+| HARD_GATE_REJECT | 379 |
+| AI_EVALUATION | 358 |
+| AI_BATCH_TRIAGE | 193 |
+| CYCLE_SUMMARY | 192 |
+| WATCHLIST_ENTER / EVICT | 46 / 46 |
+| AI_BATCH_TRIAGE_FALLBACK | 40 |
+| WATCHLIST_VETO | 14 |
+| LEVERAGE_ADJUSTMENT | 11 |
+| ORDER_SUBMISSION | 11 |
+| WATCHLIST_TRIGGER | **0** |
+
+Temuan penting dari log:
+
+1. **11 ORDER_SUBMISSION, bukan 9.** SHORT 8, LONG 3. Review menyebut 9 order; selisihnya berasal dari cut-off waktu review.
+2. **JEANPHIL-USDT masuk LONG DUA KALI** dalam sesi yang sama: `bx_long_1791584917_fe0c1b` lalu `bx_long_1791595284_d26b58` — selisih 10.367 detik (± 2 jam 53 menit), simbol dan arah identik.
+3. **Semua ENTER berconfidence 74–78** — menempel di ambang, tidak ada yang conviction tinggi.
+4. **Setiap ENTER memuat `risk_factors` yang menyebut sendiri kondisi invalidasi.** Contoh JEANPHIL: *"stop-run risk below EMA50 (0.01049)"* dan *"1h ATR >13% poses liquidation risk"* — lalu tetap `ENTER_LONG`. Review mencatat JEANPHIL kena SL dalam 19 detik.
+5. **Evidence exhaustion/divergence dipakai sebagai alasan inti:** GENIUS *"1h RSI bearish divergence at 74.34"*, NEAR *"confirmed RSI bearish divergence"*, GENSYN *"peak Fibonacci exhaustion"*, MUSEBOOK *"exhaustion score of 100"*.
+6. **ORDER_SUBMISSION tidak memuat `quote_ts`, `avg_fill_price`, `slippage`, `request_price`, maupun `effective_leverage`** — field hanya: symbol, side, position_side, quantity, price, stop/take profit, order_id, status, client_order_id.
+7. **0 WATCHLIST_TRIGGER** — tidak ada satu pun eksekusi lewat jalur watchlist di sesi ini.
+
+### 9.2 Penilaian per temuan
+
+| Temuan | Kaitan kausal ke 4 SL | Alasan berbasis bukti |
+|---|---|---|
+| **F-08** (divergence & EMA & presisi) | **Kuat** | Semua SHORT bersandar pada klaim divergence/exhaustion. F-08 menyatakan divergence dihitung dari ekstrem terpisah, bukan pivot selaras. Divergence palsu → exhaustion palsu → SHORT ke dalam kekuatan. MUSEBOOK (micro-price) termasuk yang dieksekusi, persis kasus yang disebut panduan. |
+| **F-05** (mandatory conditions parsial) | **Kuat** | Setiap ENTER lolos dengan `risk_factors` yang sudah menyebut invalidasi sendiri. Gate menerima setup yang tesisnya kontradiktif — pola "LLM self-contradictory risk factors bypassing execution gates". |
+| **F-01** (candle intrabar) | **Kuat tapi belum terbukti** | Jika candle forming dipakai, divergence/wick/volume di atas dihitung pada bar belum tutup. Log tidak merekam status closed/intrabar candle per keputusan, jadi ini hipotesis yang belum terverifikasi dari log ini. |
+| **F-06** (daily loss) & **F-04** (fixed risk) | **Amplifier, bukan penyebab** | Tidak menyebabkan SL; menentukan berapa banyak kerugian menumpuk dan apakah bot terus masuk. JEANPHIL dua kali + 11 submission tanpa cap harian = kerugian berlanjut. |
+| **F-03** (paritas watchlist) | **Tidak relevan sesi ini** | 0 WATCHLIST_TRIGGER. Risiko ini nyata untuk sesi lain, bukan untuk sesi ini. |
+| **F-02** (race stop/submit) | **Tidak relevan** | Tidak ada jalur kausal ke kualitas entry. |
+| **F-07** (leverage attribution) | **Tidak relevan ke SL, tapi terkonfirmasi** | Log memang tidak menyimpan `effective_leverage`; atribusi leverage adaptif hilang persis seperti temuan. |
+| **F-09, F-10** | **Tidak relevan** | Sintetis dan disiplin test tidak menyentuh keputusan trading. |
+
+### 9.3 Jawaban jujur
+
+**Bukan murni variance, tapi n=4 tidak cukup untuk membuktikan kausalitas.** Pada asumsi win rate 35–40%, peluang 4 loss beruntun adalah 13–18% — tidak langka, jadi variance tetap penjelasan yang sah.
+
+Namun ada dua sinyal yang menaikkan keyakinan bahwa sebagian kerugian berasal dari **kualitas entry**, bukan keberuntungan:
+
+1. JEANPHIL kena SL dalam 19 detik sementara AI-nya sendiri sudah menulis "stop-run risk below EMA50" — itu bukan nasib, itu entry ke kondisi yang sudah diidentifikasi berbahaya.
+2. Semua ENTER berconfidence 74–78 dengan `risk_factors` kontradiktif — pola sistematis, bukan kebetulan satu trade.
+
+**Klaster penyebab utama: F-08 + F-05, dengan F-01 sebagai akar hulu yang belum terbukti.** Urutan prioritas yang saya usulkan berubah dari bagian 6: **F-01 → F-08 → F-05** (integritas data → kebenaran indikator → gate yang menolak), baru **F-06/F-04** sebagai penahan kerugian. Alasan: memperbaiki F-06 tanpa F-08/F-05 hanya memperlambat kerugian dari entry yang tetap salah.
+
+**Yang tidak bisa disimpulkan:** berapa dari 4 SL yang murni noise. Log tidak merekam exit, MAE/MFE, atau status candle per keputusan. Untuk memisahkan sebab dari variance dibutuhkan langkah terukur: tarik ulang trade sesi ini, tandai tiap entry dengan jalur eksekusi, status candle saat keputusan, dan kondisi wajib mana yang meloloskan — lalu bandingkan terhadap hasil. Itu mengubah dugaan menjadi bukti.
+
+## 10. Sumber dan provenance
 
 1. Panduan Muse lokal, terutama baris 11–18 (anti-halu), 33–89 (P0/P1), 93–109 (eksperimen/promosi).
 2. Source snapshot: https://github.com/NaufalAnantaSE/big-short-agentic/tree/be8cd56ad7fcfcb2901ac61aaac61172391264ef — file/baris dirinci per temuan.
