@@ -85,13 +85,15 @@ Lima warning berasal dari deprecation FastAPI/Starlette/httpx. Total test mening
 
 ## 5. Temuan teknis dan dampak
 
-### F-01 — Buffer closed-candle produksi tidak sesuai klaim sebelumnya
+### F-01 — Buffer closed-candle produksi tidak sesuai klaim sebelumnya — **FIXED (`2151599`)**
 
 Bukti: `market_features.py:68–104`, `560–610`, dan `689`.
 
 `_closed_rows` sudah memeriksa close timestamp atau open timestamp + interval. Tetapi `buffer_ms` default masih 0, termasuk `compute_market_features`, dan caller pengambilan fitur tidak meneruskan buffer nonzero. Klaim bahwa buffer 2000 ms aktif seragam tidak didukung jalur ini.
 
-Tindak lanjut: tetapkan buffer pada konfigurasi produksi, pastikan konsisten di direct/watchlist, dan uji tepat sebelum/sesudah batas close serta clock skew. Pemeriksaan validitas `closeTime` juga perlu mencakup konsistensi terhadap interval.
+Tindak lanjut: tetapkan buffer pada konfigurasi produksi, pastikan konsisten di direct/watchlist, dan uji tepat sebelum/sesudah batas close serta clock skew.
+
+**SUDAH DIPERBAIKI (`2151599`).** `PRODUCTION_CANDLE_BUFFER_MS = 5000` kini diterapkan di `build_candidate_features`, jalur scan `orchestrator.py` (yang sebelumnya mengirim AI `limit=10` termasuk bar berjalan), dan `check_deterministic_reversal` watchlist. Kedalaman kline produksi dinaikkan ke `PRODUCTION_KLINE_LIMIT = 120`. Regression: `test_phase2_indicators.py::test_ema_trend_invalid_below_warmup` dan fixture 60 bar pada test Phase 2.
 
 ### F-02 — Generation check belum menghilangkan race stop/submit
 
@@ -119,7 +121,7 @@ Bukti: `orchestrator.py:58`, `80–107`, `259`, `703`; `tenant_manager.py:357–
 
 Tindak lanjut: sambungkan parameter dari API/config ke session state, persistence, rehydration, dan kedua jalur sizing. Verifikasi batas margin/notional, biaya, rounding, dan penolakan setup yang tidak memenuhi budget.
 
-### F-05 — Mandatory conditions belum mewajibkan seluruh pola inti
+### F-05 — Mandatory conditions belum mewajibkan seluruh pola inti — **FIXED (`49ea57c`)**
 
 Bukti: `strategy_playbook.py:55–99`, `110–153`, `163–194`.
 
@@ -128,6 +130,8 @@ Bukti: `strategy_playbook.py:55–99`, `110–153`, `163–194`.
 - BREAKDOWN_RETEST menerima retracement/flag sebagai breakdown, sementara retest rejection masih poin tambahan, bukan urutan wajib breakdown → retest gagal.
 
 Tindak lanjut: reproduksi negatif tiap pola tanpa struktur inti dan pastikan ditolak. Validasi missing/invalid feature tidak menghasilkan poin yang meloloskan setup.
+
+**SUDAH DIPERBAIKI (`49ea57c`).** Tiga pola kini menuntut struktur inti penuh: PUMP_EXHAUSTION wajib bukti rejection fisik (wick/confluent rejection/divergence) — zona Fibonacci puncak saja tidak lagi memenuhi core gate; SUPPORT_PULLBACK wajib uptrend makro **dan** konfirmasi rebound; BREAKDOWN_RETEST wajib breakdown **dan** retest gagal. Regression: `tests/test_f05_playbook_mandatory_structure.py` (8 test, RED → GREEN). Dampak terukur pada keputusan nyata ada di bagian 10.
 
 ### F-06 — Daily-loss/cooldown belum tersambung ke outcome trade produksi
 
@@ -155,7 +159,7 @@ Bukti: `db.py:270`, `457` dan helper query berikutnya; `tenant_manager.py:704–
 
 Tindak lanjut: benar-benar sambungkan entry/exit/equity, gunakan field leverage yang tepat, pertahankan unknown, tambahkan idempotency, ownership, partial-fill, dan manual/legacy attribution tests.
 
-### F-08 — P1-5 belum selesai: EMA, divergence, dan contract precision
+### F-08 — P1-5 belum selesai: EMA, divergence, dan contract precision — **PARTIAL FIX (`8f794f8`, `2151599`)**
 
 Bukti: `market_features.py:18–33`, `402–440`, `515–555`, `610`; `tests/test_p1_5_indicator_improvements.py:54–91`.
 
@@ -166,6 +170,13 @@ Bukti: `market_features.py:18–33`, `402–440`, `515–555`, `610`; `tests/tes
 - True Range telah memperhitungkan previous close. Agregasi ATR berupa mean 14 True Range; kesesuaian terhadap reference smoothing harus didokumentasikan, tidak diasumsikan sama dengan seluruh platform bursa.
 
 Tindak lanjut: wajibkan warmup di jalur aktual, gunakan pasangan pivot berindeks/timestamp sama, dan tambahkan reference-based tests serta contract-precision checks.
+
+**SEBAGIAN DIPERBAIKI (`8f794f8`, `2151599`).**
+
+- **Aligned pivots — SELESAI (`8f794f8`).** `_detect_rsi_divergence` kini membandingkan pivot harga terkonfirmasi dengan nilai RSI **pada indeks bar yang sama**. Implementasi lama dipertahankan sebagai `_detect_rsi_divergence_unaligned` khusus untuk pembanding baseline. Regression: `tests/test_f08_divergence_alignment.py` (5 test) memuat deret pembeda yang membuktikan versi lama menyala palsu dan versi baru tidak.
+- **Warmup produksi — SELESAI (`2151599`).** `EMA_WARMUP_BARS = 50` diteruskan dari `compute_market_features` ke `_ema_trend_analysis`; di bawah warmup trend dilaporkan `valid: False`.
+- **Contract precision — BELUM.** `_round_price` masih memilih desimal berdasarkan magnitude, bukan metadata kontrak. Ini sisa yang jujur belum dikerjakan.
+- **Agregasi ATR** masih mean 14 True Range; kesesuaian terhadap smoothing referensi bursa belum didokumentasikan.
 
 ### F-09 — Fase 3 adalah contoh metrik sintetis, bukan eksperimen selesai
 
@@ -288,11 +299,53 @@ Prioritas yang saya usulkan, berbasis bukti ini:
 
 Uji yang bisa memfalsifikasi dugaan ini: jalankan ulang 13 keputusan ENTER sesi itu melalui pipeline yang sudah diperbaiki (candle closed, divergence selaras, syarat wajib penuh) dan hitung berapa yang tetap lolos. Bila mayoritas terblokir, klaster entry-quality terbukti; bila hampir semua tetap lolos, variance lebih dominan dan prioritas berpindah ke manajemen risiko. Itu mengubah dugaan menjadi bukti, dan tidak butuh sesi baru.
 
-## 10. Sumber dan provenance
+## 10. Uji falsifikasi 13 keputusan ENTER (F-01 / F-05 / F-08)
+
+**Aturan keputusan didaftarkan lebih dulu, sebelum hasil diketahui.** Bila mayoritas dari 13 keputusan ENTER sesi `bx_sess_1791579205_ab6bff` kini terblokir oleh lapisan deterministik yang sudah diperbaiki, klaster kualitas entry (F-01/F-05/F-08) didukung sebagai penyebab 4 SL beruntun. Bila hampir semuanya tetap lolos, variance lebih dominan dan prioritas berpindah ke manajemen risiko (F-06/F-04).
+
+**Metode.** `scripts/falsification_analysis.py`, dengan `scripts/falsification_replay.py` dan `scripts/falsification_baseline_vs_fixed.py` sebagai pass pendukung. Klines diambil **point-in-time**: `startTime`+`endTime` diisi timestamp keputusan asli (BingX menghormati keduanya — terverifikasi: window 10 jam mengembalikan 40 bar 15m, bukan 120), lalu `_closed_rows` membuang bar yang belum tutup. Tidak ada look-ahead. Playbook dijalankan dua kali atas fitur yang identik: mesin baseline (commit `2151599`, pre-F-05, dimuat via `git show`) dan mesin sekarang.
+
+### 10.1 Hasil
+
+| Metrik | Nilai |
+|---|---|
+| Hard gate memblokir @ spread wajar | **0/13** |
+| Hard gate memblokir bila spread ≥ breakeven | 5/13 (breakeven 0.29–0.34%) |
+| Playbook baseline meng-endorse arah AI | 10/13 |
+| Playbook setelah F-05 meng-endorse arah AI | **6/13** |
+| Endorsement dicabut oleh F-05 | 4/13 |
+| Divergence dibalik F-08 (`BEARISH_DIV` → `NONE`) | 2/13 (ADA, CORE — keduanya SHORT) |
+| Bar belum tutup hadir di feed | **13/13** |
+| Kode produksi yang membaca `risk_factors` sebagai gate | **0** |
+| Entry yang `risk_factors`-nya menyebut risiko invalidasi | 4/13 |
+
+Pecahan arah: **SHORT 2/8** masih ter-endorse (baseline 5/8) · **LONG 4/5** (baseline 5/5).
+
+### 10.2 Verdict terhadap aturan keputusan
+
+**Dukungan parsial — bukan konfirmasi.** 7 dari 13 keputusan masih lolos, sehingga syarat "mayoritas terblokir" tidak terpenuhi dan variance belum bisa dikesampingkan pada n=4. Efek F-05 terkonsentrasi di sisi SHORT — sisi yang mendominasi kerugian sesi itu — tetapi itu memperkuat hipotesis, tidak membuktikannya.
+
+### 10.3 Temuan paling tajam: tidak ada gate untuk kontradiksi internal
+
+Pencarian menyeluruh menemukan **nol** kode produksi yang membaca `risk_factors` sebagai gate. Field itu hanya ditulis ke audit log, disimpan ke DB, dan dihumanisasi oleh `plain_explainer.py` — tidak pernah menolak apa pun.
+
+Empat dari 13 entry menulis risiko invalidasi di `risk_factors`-nya sendiri lalu tetap dieksekusi. Yang paling tegas adalah JEANPHIL (LONG ketiga): *"stop-run risk below EMA50 (0.01049)"*. Kontradiksi internal ini tidak punya gate sama sekali. Ini memperkuat usulan ekstensi P1-2: **bila `risk_factors` memuat risiko berjenis invalidasi, wajib ada rebuttal eksplisit atau otomatis turun ke WAIT.**
+
+### 10.4 Batas yang tidak boleh dilewati saat mengutip angka ini
+
+1. Blokir 13/13 pada mode production-faithful adalah **artefak harness**, bukan temuan. Depth orderbook dan open interest tidak punya endpoint historis point-in-time, sehingga freshness fail-closed. Metrik itu dibuang dari laporan, tidak disajikan sebagai hasil.
+2. `playbook = NONE` **tidak memblokir order**. Di jalur produksi playbook hanya konteks untuk LLM dan kunci sortir (`orchestrator.py`). Karena itu replay ini **tidak boleh** diklaim sebagai "sistem baru akan mencegah trade tersebut"; yang benar adalah sistem tidak lagi menyajikannya sebagai setup ter-endorse.
+3. 5/13 punya breakeven spread 0.29–0.34%. Bila spread riil saat itu lebih lebar dari itu, gate ATR akan memblokirnya. Tidak dapat diverifikasi tanpa depth historis, jadi dilaporkan sebagai sensitivitas, bukan verdict.
+4. LLM tidak dijalankan ulang (non-deterministik, biaya token). Yang di-replay adalah lapisan deterministik yang menggating dan memberi skor.
+
+**Artefak mentah:** `~/.hermes/cache/scratch/falsification_final.json` — 13 baris, per keputusan: status gate, playbook baseline vs fixed, divergence, ATR, breakeven spread, dan status intrabar.
+
+## 11. Sumber dan provenance
 
 1. Panduan Muse lokal, terutama baris 11–18 (anti-halu), 33–89 (P0/P1), 93–109 (eksperimen/promosi).
 2. Source snapshot: https://github.com/NaufalAnantaSE/big-short-agentic/tree/be8cd56ad7fcfcb2901ac61aaac61172391264ef — file/baris dirinci per temuan.
 3. Output Git diperiksa ulang saat laporan dibuat; output pytest/build berasal dari eksekusi nyata terakhir pada sesi yang sama, bukan dijalankan ulang atau dibuat ulang sebagai log.
-4. Temuan di atas berasal dari pembacaan kode dan caller search; skenario race dan gap integrasi belum direproduksi sebagai regression baru dalam pekerjaan dokumentasi ini.
+4. Temuan di atas berasal dari pembacaan kode dan caller search; skenario race dan gap integrasi belum direproduksi sebagai regression baru.
+5. Bagian 10 berasal dari eksekusi nyata `scripts/falsification_analysis.py` atas data klines historis BingX yang diambil saat laporan ini dibuat; angka tidak disalin dari pass sebelumnya dan tidak direkonstruksi dari ingatan. Suite akhir: 239 passed (dari 225 sebelum F-01/F-05/F-08).
 
 Dokumen ini bukan persetujuan Muse, bukan laporan profitabilitas, dan tidak mengubah kode produksi, menghentikan posisi, atau me-restart bot.
