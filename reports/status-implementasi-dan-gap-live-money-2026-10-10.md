@@ -226,60 +226,67 @@ Owner yang diusulkan: Hermes untuk implementasi; Muse untuk review independen. D
 
 Pertanyaan Naufal: dari 10 temuan, mana yang paling mungkin menjelaskan 4 SL beruntun sesi `bx_sess_1791579205_ab6bff` — atau semuanya variance?
 
-Jawaban ini memakai bukti dari `logs/audit.jsonl` (1.291 baris untuk sesi tersebut), bukan opini. Batas: log audit **tidak** merekam event exit/close, jadi identifikasi "4 SL" bersumber dari [[Audit Komprehensif Finansial dan Teknis Paper Trading 4 Jam VST]], bukan dari log ini.
+Metode: agregasi `logs/audit.jsonl` untuk `session_id = bx_sess_1791579205_ab6bff` (1.291 baris). Ini bukti log, bukan pendapat.
 
-### 9.1 Bukti mentah yang relevan
+### 9.1 Fakta dari log
 
-Event yang terekam untuk sesi ini:
-
-| Event | Jumlah |
+| Metrik | Nilai |
 |---|---|
-| HARD_GATE_REJECT | 379 |
-| AI_EVALUATION | 358 |
-| AI_BATCH_TRIAGE | 193 |
-| CYCLE_SUMMARY | 192 |
-| WATCHLIST_ENTER / EVICT | 46 / 46 |
-| AI_BATCH_TRIAGE_FALLBACK | 40 |
-| WATCHLIST_VETO | 14 |
-| LEVERAGE_ADJUSTMENT | 11 |
-| ORDER_SUBMISSION | 11 |
-| WATCHLIST_TRIGGER | **0** |
+| `AI_EVALUATION` | 358 |
+| Keputusan: WAIT / SKIP / ENTER | 211 / 136 / **13** |
+| `ORDER_SUBMISSION` | **11** (8 SHORT, 3 LONG) |
+| `HARD_GATE_REJECT` | 379 |
+| `WATCHLIST_TRIGGER` | **0** |
+| `WATCHLIST_VETO` | 14, **semuanya** `invalid_direction:UNKNOWN` |
+| `AI_BATCH_TRIAGE_FALLBACK` | 40 |
+| Confidence seluruh ENTER | **72–78** (semua menempel ambang) |
 
-Temuan penting dari log:
+Alasan gate terbanyak: `atr_below_friction_threshold` 289, `spread_too_wide` 169, `long_fomo_danger` 129, `dump_already_extended` 55.
 
-1. **11 ORDER_SUBMISSION, bukan 9.** SHORT 8, LONG 3. Review menyebut 9 order; selisihnya berasal dari cut-off waktu review.
-2. **JEANPHIL-USDT masuk LONG DUA KALI** dalam sesi yang sama: `bx_long_1791584917_fe0c1b` lalu `bx_long_1791595284_d26b58` — selisih 10.367 detik (± 2 jam 53 menit), simbol dan arah identik.
-3. **Semua ENTER berconfidence 74–78** — menempel di ambang, tidak ada yang conviction tinggi.
-4. **Setiap ENTER memuat `risk_factors` yang menyebut sendiri kondisi invalidasi.** Contoh JEANPHIL: *"stop-run risk below EMA50 (0.01049)"* dan *"1h ATR >13% poses liquidation risk"* — lalu tetap `ENTER_LONG`. Review mencatat JEANPHIL kena SL dalam 19 detik.
-5. **Evidence exhaustion/divergence dipakai sebagai alasan inti:** GENIUS *"1h RSI bearish divergence at 74.34"*, NEAR *"confirmed RSI bearish divergence"*, GENSYN *"peak Fibonacci exhaustion"*, MUSEBOOK *"exhaustion score of 100"*.
-6. **ORDER_SUBMISSION tidak memuat `quote_ts`, `avg_fill_price`, `slippage`, `request_price`, maupun `effective_leverage`** — field hanya: symbol, side, position_side, quantity, price, stop/take profit, order_id, status, client_order_id.
-7. **0 WATCHLIST_TRIGGER** — tidak ada satu pun eksekusi lewat jalur watchlist di sesi ini.
+Temuan paling penting dari 13 ENTER: **JEANPHIL-USDT muncul 3 kali sebagai keputusan `ENTER_LONG` dan 2 kali benar-benar terkirim** dalam sesi yang sama:
 
-### 9.2 Penilaian per temuan
+- `bx_long_1791584917_fe0c1b` @ 0.010849
+- `bx_long_1791595284_d26b58` @ 0.010834 (±2j53m kemudian)
 
-| Temuan | Kaitan kausal ke 4 SL | Alasan berbasis bukti |
+Ini masuk LONG ke simbol yang sudah punya posisi LONG. Gate anti-re-entry P1-3 belum ada saat sesi itu berjalan, jadi tidak ada yang memblokir.
+
+Kedua, `risk_factors` yang ditulis AI sendiri pada entry JEANPHIL sudah menyebut invalidasinya:
+
+> "stop-run risk below EMA50 (0.01049)" dan "1h ATR >13% poses liquidation risk"
+
+AI menandai risiko stop-run, lalu tetap `ENTER_LONG`. Laporan review mencatat JEANPHIL kena SL dalam 19 detik.
+
+Ketiga, `ORDER_SUBMISSION` sesi itu **tidak memuat** `quote_ts`, `request_price`, `avg_fill_price`, `slippage`, maupun `effective_leverage`. Tidak ada exit/close event sama sekali di log, sehingga atribusi R per-trade tidak mungkin dihitung dari log ini — F-07 dan P0-2 tampak nyata di data.
+
+### 9.2 Diskrepansi yang perlu direkonsiliasi
+
+Laporan review menyebut **9 order (7 SHORT, 2 LONG)**. Agregasi log ini menghitung **11 submission (8 SHORT, 3 LONG)**. Selisih 2 = 1 SHORT + 1 LONG tambahan (termasuk JEANPHIL LONG kedua). Penyebab belum dipastikan: kemungkinan perbedaan window waktu atau deduplikasi. Saya tidak menyimpulkan mana yang benar — ini perlu direkonsiliasi sebelum angka apa pun dipakai untuk keputusan.
+
+### 9.3 Penilaian per temuan
+
+| Temuan | Kaitan ke 4 SL | Dasar |
 |---|---|---|
-| **F-08** (divergence & EMA & presisi) | **Kuat** | Semua SHORT bersandar pada klaim divergence/exhaustion. F-08 menyatakan divergence dihitung dari ekstrem terpisah, bukan pivot selaras. Divergence palsu → exhaustion palsu → SHORT ke dalam kekuatan. MUSEBOOK (micro-price) termasuk yang dieksekusi, persis kasus yang disebut panduan. |
-| **F-05** (mandatory conditions parsial) | **Kuat** | Setiap ENTER lolos dengan `risk_factors` yang sudah menyebut invalidasi sendiri. Gate menerima setup yang tesisnya kontradiktif — pola "LLM self-contradictory risk factors bypassing execution gates". |
-| **F-01** (candle intrabar) | **Kuat tapi belum terbukti** | Jika candle forming dipakai, divergence/wick/volume di atas dihitung pada bar belum tutup. Log tidak merekam status closed/intrabar candle per keputusan, jadi ini hipotesis yang belum terverifikasi dari log ini. |
-| **F-06** (daily loss) & **F-04** (fixed risk) | **Amplifier, bukan penyebab** | Tidak menyebabkan SL; menentukan berapa banyak kerugian menumpuk dan apakah bot terus masuk. JEANPHIL dua kali + 11 submission tanpa cap harian = kerugian berlanjut. |
-| **F-03** (paritas watchlist) | **Tidak relevan sesi ini** | 0 WATCHLIST_TRIGGER. Risiko ini nyata untuk sesi lain, bukan untuk sesi ini. |
-| **F-02** (race stop/submit) | **Tidak relevan** | Tidak ada jalur kausal ke kualitas entry. |
-| **F-07** (leverage attribution) | **Tidak relevan ke SL, tapi terkonfirmasi** | Log memang tidak menyimpan `effective_leverage`; atribusi leverage adaptif hilang persis seperti temuan. |
-| **F-09, F-10** | **Tidak relevan** | Sintetis dan disiplin test tidak menyentuh keputusan trading. |
+| **F-05** (syarat wajib parsial) | **Paling kuat** | 13 ENTER lolos meski `risk_factors` sendiri menyebut kondisi invalidasi (JEANPHIL: stop-run di EMA50). Gate menerima tesis yang bertentangan dengan eksekusinya — persis pola "LLM self-contradictory risk factors bypassing execution gates". |
+| **F-01** (buffer closed-candle 0) | **Kuat** | Alasan tiap ENTER bersandar pada "RSI bearish divergence", "peak Fibonacci exhaustion", "volume dry-up" — fitur yang paling rusak bila candle belum tutup. Ini bisa memproduksi sinyal exhaustion palsu. Belum terbukti: log tidak merekam status candle per keputusan. |
+| **F-08** (divergence tidak selaras pivot) | **Kuat** | Semua justifikasi SHORT mengutip divergence; bila divergence membandingkan ekstrem terpisah, ia bisa menyala palsu. Confidence 72–78 (menempel ambang) konsisten dengan sinyal batas. |
+| **F-06** (daily loss / anti-re-entry) | **Menjelaskan akumulasi, bukan SL pertama** | JEANPHIL LONG 2× dalam satu sesi. Tanpa gate, kerugian menumpuk alih-alih berhenti di satu trade. |
+| **F-04** (fixed-risk opt-in) | **Menjelaskan besar, bukan arah** | Variasi ukuran loss, bukan sebab loss. |
+| **F-02, F-07, F-09, F-10** | **Tidak relevan** | Tidak ada jalur kausal ke kualitas entry; F-07 hanya menerangkan kenapa atribusinya tidak bisa dibuktikan. |
 
-### 9.3 Jawaban jujur
+### 9.4 Jawaban langsung
 
-**Bukan murni variance, tapi n=4 tidak cukup untuk membuktikan kausalitas.** Pada asumsi win rate 35–40%, peluang 4 loss beruntun adalah 13–18% — tidak langka, jadi variance tetap penjelasan yang sah.
+**Tidak bisa dipastikan pada n=4, tapi ada klaster yang jauh lebih masuk akal daripada murni variance.**
 
-Namun ada dua sinyal yang menaikkan keyakinan bahwa sebagian kerugian berasal dari **kualitas entry**, bukan keberuntungan:
+- Sisi variance: sistem RR 2:1 dengan win rate asli ~35–40% memberi peluang 4 loss beruntun sekitar 13–18%. Jadi "kebetulan" tidak bisa dibuang.
+- Sisi non-variance: bukti yang tidak bisa dijelaskan variance adalah **JEANPHIL** — AI menulis sendiri risiko stop-run di EMA50, tetap masuk LONG, dan kena SL dalam 19 detik. Itu bukan nasib; itu gate yang meloloskan setup yang invalidasi-nya sudah dikenali. Ditambah 13 ENTER yang semuanya berconfidence 72–78 (menempel ambang, bukan keyakinan kuat) dan **JEANPHIL LONG dua kali**.
 
-1. JEANPHIL kena SL dalam 19 detik sementara AI-nya sendiri sudah menulis "stop-run risk below EMA50" — itu bukan nasib, itu entry ke kondisi yang sudah diidentifikasi berbahaya.
-2. Semua ENTER berconfidence 74–78 dengan `risk_factors` kontradiktif — pola sistematis, bukan kebetulan satu trade.
+Prioritas yang saya usulkan, berbasis bukti ini:
 
-**Klaster penyebab utama: F-08 + F-05, dengan F-01 sebagai akar hulu yang belum terbukti.** Urutan prioritas yang saya usulkan berubah dari bagian 6: **F-01 → F-08 → F-05** (integritas data → kebenaran indikator → gate yang menolak), baru **F-06/F-04** sebagai penahan kerugian. Alasan: memperbaiki F-06 tanpa F-08/F-05 hanya memperlambat kerugian dari entry yang tetap salah.
+1. **F-05 + F-08 + F-01 sebagai satu klaster kualitas entry** — ini yang paling mungkin menurunkan frekuensi SL, bukan sekadar memperkecilnya.
+2. **F-06 + F-07** — pembatas kerugian dan atribusi; penting, tapi tidak akan mengubah sinyal yang salah menjadi benar.
+3. **Rekonsiliasi 9 vs 11 order** sebelum metrik apa pun dipakai untuk keputusan.
 
-**Yang tidak bisa disimpulkan:** berapa dari 4 SL yang murni noise. Log tidak merekam exit, MAE/MFE, atau status candle per keputusan. Untuk memisahkan sebab dari variance dibutuhkan langkah terukur: tarik ulang trade sesi ini, tandai tiap entry dengan jalur eksekusi, status candle saat keputusan, dan kondisi wajib mana yang meloloskan — lalu bandingkan terhadap hasil. Itu mengubah dugaan menjadi bukti.
+Uji yang bisa memfalsifikasi dugaan ini: jalankan ulang 13 keputusan ENTER sesi itu melalui pipeline yang sudah diperbaiki (candle closed, divergence selaras, syarat wajib penuh) dan hitung berapa yang tetap lolos. Bila mayoritas terblokir, klaster entry-quality terbukti; bila hampir semua tetap lolos, variance lebih dominan dan prioritas berpindah ke manajemen risiko. Itu mengubah dugaan menjadi bukti, dan tidak butuh sesi baru.
 
 ## 10. Sumber dan provenance
 
