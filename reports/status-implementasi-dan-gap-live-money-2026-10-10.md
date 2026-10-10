@@ -329,7 +329,17 @@ Pecahan arah: **SHORT 2/8** masih ter-endorse (baseline 5/8) · **LONG 4/5** (ba
 
 Pencarian menyeluruh menemukan **nol** kode produksi yang membaca `risk_factors` sebagai gate. Field itu hanya ditulis ke audit log, disimpan ke DB, dan dihumanisasi oleh `plain_explainer.py` — tidak pernah menolak apa pun.
 
-Empat dari 13 entry menulis risiko invalidasi di `risk_factors`-nya sendiri lalu tetap dieksekusi. Yang paling tegas adalah JEANPHIL (LONG ketiga): *"stop-run risk below EMA50 (0.01049)"*. Kontradiksi internal ini tidak punya gate sama sekali. Ini memperkuat usulan ekstensi P1-2: **bila `risk_factors` memuat risiko berjenis invalidasi, wajib ada rebuttal eksplisit atau otomatis turun ke WAIT.**
+Empat dari 13 entry menulis risiko invalidasi di `risk_factors`-nya sendiri lalu tetap dieksekusi. Yang paling tegas adalah JEANPHIL (LONG ketiga): *"stop-run risk below EMA50 (0.01049)"*. Kontradiksi internal ini tidak punya gate sama sekali.
+
+**SUDAH DIPERBAIKI: Ekstensi P1-2 (`afc6e0c`).** Gate kontradiksi terstruktur (bukan tebak-tebakan regex/keyword):
+1. Skema prompt Tier 2 (`build_structured_deep_prompt`) dan Fallback (`evaluate_candidate`) mewajibkan Contradiction Audit: `invalidation_risk_present` (true/false), `invalidation_risk_detail`, dan `invalidation_rebuttal`.
+2. Evaluator menjalankan `apply_invalidation_gate`:
+   - Jawaban absen/ambigu (`None`) → fail-closed ke `WAIT` (`invalidating_risk_answer_missing`).
+   - Jawaban `True` tanpa sanggahan konkret/substantif (placeholder/teks kosong/bare denial <15 karakter) → otomatis downgrade ke `WAIT` (`invalidating_risk_unrebutted`).
+   - Jawaban `True` dengan sanggahan substantif faktual → `ENTER` diizinkan.
+   - Jawaban `False` → `ENTER` diizinkan.
+3. Terintegrasi ke orchestrator (`SessionOrchestrator.run_cycle`): keputusan di-downgrade menjadi `WAIT`, dialihkan ke watchlist tanpa mengisi kuota/eksekusi trade, dan dicatat di telemetri/audit log.
+4. Regression: `tests/test_p1_2_invalidation_gate.py` (44 test, RED → GREEN). Total suite: **283 passed**.
 
 ### 10.4 Batas yang tidak boleh dilewati saat mengutip angka ini
 
