@@ -52,13 +52,13 @@ def evaluate_playbooks(
     pe_score = 0
     rsi_15m = float(rsi.get("rsi_15m", 50.0) or 50.0)
 
-    # P1-2 Mandatory Condition: MUST have confirmed core exhaustion / rejection pattern
+    # P1-2 / F-05 Mandatory Condition: MUST have PHYSICAL rejection evidence.
+    # A Fibonacci peak zone is a location, not proof that buyers were rejected, so it
+    # can no longer satisfy the core gate on its own.
     has_pe_core = (
         imp.get("confluent_rejection") is True
         or float(imp.get("wick_15m", 0.0) or 0.0) >= 0.20
         or rsi.get("divergence") == "BEARISH_DIV"
-        or fib.get("is_peak_exhaustion") is True
-        or fib.get("zone") in ("PEAK_EXHAUSTION", "BLOW_OFF_EXTENSION")
     )
 
     if has_pe_core:
@@ -107,14 +107,28 @@ def evaluate_playbooks(
     sp_score = 0
     trend = ema.get("trend", "NEUTRAL")
 
-    # P1-2 Mandatory Condition: MUST have real support zone and NOT be in breakdown danger
+    # P1-2 / F-05 Mandatory Condition: MUST have a real support zone, a macro uptrend,
+    # and a rebound confirmation. Trend and confirmation are no longer bonus points.
     has_sp_core = (
         fib.get("is_golden_pullback") is True
         or fib.get("zone") in ("GOLDEN_POCKET", "SUPPORT_RETEST", "PULLBACK_VALUE")
     )
     is_sp_breakdown = bool(fib.get("is_dump_extended") or fib.get("is_long_breakdown_danger"))
 
-    if has_sp_core and not is_sp_breakdown:
+    sp_timeframes = mf.get("timeframes") or {}
+    sp_last_dir = sp_timeframes.get("15m", {}).get("last_direction")
+    sp_consec_bull = float(imp.get("consecutive_bull_bars", 0) or 0)
+    sp_lower_wick = float(imp.get("lower_wick_15m", 0.0) or 0.0)
+    has_sp_uptrend = trend in ("STRONG_UPTREND", "MILD_UPTREND")
+    has_sp_rebound = (
+        rsi.get("divergence") == "BULLISH_DIV"
+        or sp_last_dir == "UP"
+        or sp_consec_bull >= 1
+        or sp_lower_wick >= 0.25
+        or bool(imp.get("confluent_lower_rejection"))
+    )
+
+    if has_sp_core and has_sp_uptrend and has_sp_rebound and not is_sp_breakdown:
         if fib.get("is_golden_pullback"):
             sp_score += 30
             sp_signals.append("Koreksi sehat di area Golden Pocket Fib (0.382 - 0.618)")
@@ -160,14 +174,18 @@ def evaluate_playbooks(
     br_score = 0
     ratio = float(fib.get("retracement_ratio", 0.0) or 0.0)
 
-    # P1-2 Mandatory Condition: MUST have actual structural breakdown of major support
+    # P1-2 / F-05 Mandatory Condition: MUST have an actual structural breakdown AND a
+    # rejected retest. A deep retracement/flag alone is no longer accepted as breakdown,
+    # and retest rejection is no longer a bonus point.
     has_br_breakdown = (
         ratio >= 0.65
         or fib.get("is_dump_extended") is True
         or fib.get("zone") in ("BREAKDOWN", "BELOW_SUPPORT")
     )
+    br_wick = float(imp.get("wick_15m", 0.0) or 0.0)
+    has_br_rejection = br_wick >= 0.20 or bool(imp.get("confluent_rejection"))
 
-    if has_br_breakdown:
+    if has_br_breakdown and has_br_rejection:
         if trend in ("STRONG_DOWNTREND", "MILD_DOWNTREND"):
             br_score += 30
             br_signals.append("Tren makro EMA dominan menurun")
