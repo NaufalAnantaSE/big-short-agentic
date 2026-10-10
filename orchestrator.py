@@ -2,6 +2,7 @@
 
 import time
 import uuid
+import threading
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,7 @@ def _safe_rr(raw: Any, default: float = 2.0) -> float:
 class SessionState(BaseModel):
     session_id: str
     status: str = "IDLE"  # IDLE, ACTIVE_SEARCHING, EXECUTING_ENTRY, EXHAUSTED, TERMINATED
+    generation_token: str = Field(default_factory=lambda: uuid.uuid4().hex)
     margin_per_pos: float
     leverage: int
     quota: int
@@ -66,6 +68,7 @@ class SessionOrchestrator:
         self.ai = AIEvaluator(config)
         self.watchlist = WatchlistManager()
         self.current_session: Optional[SessionState] = None
+        self._session_lock = threading.Lock()
 
     def start_session(
         self,
@@ -111,17 +114,19 @@ class SessionOrchestrator:
 
     def stop_session(self) -> Optional[SessionState]:
         """Terminates active session, cancels all linked resting orders, and clears watchlist entries."""
-        if self.current_session:
-            self.current_session.status = "TERMINATED"
-            for entry in self.watchlist.get_all_entries():
-                self.watchlist.cancel_entry_resting_order(
-                    entry=entry,
-                    reason="SESSION_STOPPED",
-                    client=self.client,
-                    session_id=self.current_session.session_id
-                )
-            self.watchlist.entries.clear()
-        return self.current_session
+        with self._session_lock:
+            if self.current_session:
+                self.current_session.status = "TERMINATED"
+                self.current_session.generation_token = f"TERMINATED_{uuid.uuid4().hex}"
+                for entry in self.watchlist.get_all_entries():
+                    self.watchlist.cancel_entry_resting_order(
+                        entry=entry,
+                        reason="SESSION_STOPPED",
+                        client=self.client,
+                        session_id=self.current_session.session_id
+                    )
+                self.watchlist.entries.clear()
+            return self.current_session
 
     def _evaluate_and_execute_candidate(
         self,
@@ -178,6 +183,7 @@ class SessionOrchestrator:
 
         tokens_used = int(ai_res.usage.get("total_tokens", 0) or 0)
         session_id = self.current_session.session_id if self.current_session else ""
+        session_gen = getattr(self.current_session, "generation_token", "") if self.current_session else ""
         AuditLogger.log_ai_evaluation(
             symbol=cand.symbol,
             decision=ai_res.decision,
@@ -353,6 +359,15 @@ class SessionOrchestrator:
                         execution_report["request_price"] = executable_price
                         execution_report["quote_ts"] = quote_ts
 
+        # P0-4: Session-stop race protection
+        if not self.current_session or self.current_session.status == "TERMINATED":
+            curr_st = self.current_session.status if self.current_session else "NONE"
+            veto_reason = f"SESSION_TERMINATED:{curr_st}"
+        elif getattr(self.current_session, "generation_token", "") != session_gen:
+            veto_reason = "SESSION_GENERATION_MISMATCH"
+        elif self.current_session.session_id != session_id:
+            veto_reason = "SESSION_ID_MISMATCH"
+
         if veto_reason:
             execution_report["veto_reason"] = veto_reason
             AuditLogger.log_event("TRADE_EXECUTION_VETO", {
@@ -519,6 +534,9 @@ class SessionOrchestrator:
         if not self.current_session or self.current_session.status not in ("ACTIVE_SEARCHING", "EXHAUSTED"):
             return {"status": "NO_ACTIVE_SESSION", "message": "No active session in searching state."}
 
+        session_id = self.current_session.session_id
+        cycle_gen = getattr(self.current_session, "generation_token", "")
+
         try:
             occupied = self.scanner.get_occupied_symbols()
         except Exception as e:
@@ -605,6 +623,19 @@ class SessionOrchestrator:
                     )
 
                     if sizing.is_valid:
+                        # P0-4: Session-stop race protection
+                        if (
+                            not self.current_session
+                            or self.current_session.status == "TERMINATED"
+                            or getattr(self.current_session, "generation_token", "") != cycle_gen
+                            or self.current_session.session_id != session_id
+                        ):
+                            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                "symbol": entry.symbol,
+                                "veto_reason": "SESSION_TERMINATED_AT_WATCHLIST_TRIGGER"
+                            }, session_id=session_id)
+                            break
+
                         target_pos_side = entry.direction.upper()
                         target_order_side = "SELL" if target_pos_side == "SHORT" else "BUY"
                         prefix = "bx_short" if target_pos_side == "SHORT" else "bx_long"
