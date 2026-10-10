@@ -150,15 +150,32 @@ class SizingCalculator:
         atr: Optional[float] = None,
         target_rr: float = 2.0,
         atr_multiplier_sl: float = 1.5,
+        risk_budget_usdt: Optional[float] = None,
     ) -> SizingResult:
         """
         Calculates exact order quantity according to exchange contract precision.
+        If risk_budget_usdt is provided and > 0, delegates to fixed-risk sizing (P1-1).
         Formula:
           effective_leverage = min(target_leverage, contract_max_leverage, max_allowed_leverage)
           notional = margin_usdt * effective_leverage
           raw_qty = notional / current_price
           qty = floor(raw_qty, quantityPrecision)
         """
+        if risk_budget_usdt is not None and risk_budget_usdt > 0:
+            return SizingCalculator.calculate_fixed_risk_lot(
+                symbol=symbol,
+                risk_budget_usdt=risk_budget_usdt,
+                target_leverage=target_leverage,
+                current_price=current_price,
+                contract_info=contract_info,
+                max_allowed_leverage=max_allowed_leverage,
+                direction=direction,
+                atr=atr,
+                target_rr=target_rr,
+                atr_multiplier_sl=atr_multiplier_sl,
+                max_margin_usdt=margin_usdt if margin_usdt > 0 else None,
+            )
+
         if margin_usdt <= 0:
             return SizingResult(
                 symbol=symbol,
@@ -399,6 +416,272 @@ class SizingCalculator:
             take_profit_price=tp_price,
             risk_reward_ratio=round(float(effective_rr), 4),
             risk_amount_usdt=round(risk_usdt, 2),
+            potential_profit_usdt=round(profit_usdt, 2),
+            sl_percent=sl_pct,
+            tp_percent=tp_pct,
+            risk_pct_of_margin=risk_pct_of_margin,
+        )
+
+    @staticmethod
+    def calculate_fixed_risk_lot(
+        symbol: str,
+        risk_budget_usdt: float,
+        target_leverage: int,
+        current_price: float,
+        contract_info: Dict[str, Any],
+        max_allowed_leverage: int = 20,
+        direction: str = "SHORT",
+        atr: Optional[float] = None,
+        target_rr: float = 2.0,
+        atr_multiplier_sl: float = 1.5,
+        max_margin_usdt: Optional[float] = None,
+        fee_buffer_pct: float = 0.10,
+    ) -> SizingResult:
+        """
+        P1-1: Fixed-Risk Sizing Calculator.
+        Determines quantity based on structural volatility risk:
+          quantity = risk_budget / |entry - stop|
+        Guarantees that risk_amount_usdt across diverse setups stays within +-10% of risk_budget.
+        If exchange constraints (tradeMinQuantity, tradeMinUSDT, max_margin) cannot fit within
+        the risk budget +-10%, the trade is rejected (fail-closed).
+        """
+        if risk_budget_usdt <= 0:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason="Risk budget must be strictly positive (> 0)."
+            )
+
+        if current_price <= 0:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason="Price must be strictly positive (> 0)."
+            )
+
+        try:
+            d_target_rr = _validate_target_rr(target_rr)
+        except ValueError as e:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"Invalid target_rr: {target_rr}. Must be a finite number >= 2.0."
+            )
+
+        dir_norm = direction.upper()
+        if dir_norm not in ("LONG", "SHORT"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"Invalid direction: {direction}. Must be 'LONG' or 'SHORT'."
+            )
+
+        # 1. Determine Stop-Loss and Take-Profit FIRST from volatility/structure
+        try:
+            sl_price, tp_price, sl_pct, tp_pct = SizingCalculator.calculate_dynamic_tpsl(
+                symbol=symbol,
+                direction=direction,
+                entry_price=current_price,
+                contract_info=contract_info,
+                atr=atr,
+                atr_multiplier_sl=atr_multiplier_sl,
+                target_rr=float(d_target_rr)
+            )
+        except ValueError as e:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason=f"TP/SL calculation failed: {str(e)}",
+                risk_reward_ratio=float(d_target_rr),
+            )
+
+        d_entry = Decimal(str(current_price))
+        d_sl = Decimal(str(sl_price))
+        d_tp = Decimal(str(tp_price))
+        d_stop_dist = abs(d_entry - d_sl)
+
+        if d_stop_dist <= Decimal("0"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=0.0,
+                quantity=0.0,
+                is_valid=False,
+                rejection_reason="Stop-loss distance must be strictly positive."
+            )
+
+        d_unit_risk = d_stop_dist
+        d_risk_budget = Decimal(str(risk_budget_usdt))
+
+        # 2. Derive raw quantity from fixed risk budget
+        raw_qty = d_risk_budget / d_unit_risk
+
+        qty_precision = int(contract_info.get("quantityPrecision", 0))
+        trade_min_qty = Decimal(str(contract_info.get("tradeMinQuantity", "0.0001")))
+        trade_min_usdt = Decimal(str(contract_info.get("tradeMinUSDT", "5.0")))
+        lev_key = "maxLongLeverage" if dir_norm == "LONG" else "maxShortLeverage"
+        pair_max_leverage = int(contract_info.get(lev_key, max_allowed_leverage))
+
+        precision_step = Decimal("10") ** (-qty_precision) if qty_precision > 0 else Decimal("1")
+        qty_round = raw_qty.quantize(precision_step, rounding=ROUND_HALF_UP)
+        qty_down = raw_qty.quantize(precision_step, rounding=ROUND_DOWN)
+
+        candidates = [q for q in (qty_round, qty_down) if q >= trade_min_qty]
+        if not candidates:
+            min_risk = trade_min_qty * d_unit_risk
+            if abs(min_risk - d_risk_budget) / d_risk_budget <= Decimal("0.10"):
+                d_qty = trade_min_qty
+            else:
+                return SizingResult(
+                    symbol=symbol,
+                    target_margin=0.0,
+                    effective_leverage=0,
+                    entry_price=current_price,
+                    notional_value=0.0,
+                    quantity=0.0,
+                    is_valid=False,
+                    rejection_reason=(
+                        f"Exchange tradeMinQuantity {trade_min_qty} risk ({min_risk:.2f} USDT) "
+                        f"exceeds risk budget ({d_risk_budget:.2f} USDT) by >10%."
+                    )
+                )
+        else:
+            d_qty = min(candidates, key=lambda q: abs(q * d_unit_risk - d_risk_budget))
+
+        actual_risk = d_qty * d_unit_risk
+        risk_deviation = abs(actual_risk - d_risk_budget) / d_risk_budget
+        if risk_deviation > Decimal("0.10"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=float(d_qty * d_entry),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=(
+                    f"Quantized risk {actual_risk:.2f} USDT deviates from budget {d_risk_budget:.2f} USDT by "
+                    f"{risk_deviation*100:.1f}% (>10%)."
+                )
+            )
+
+        actual_notional = d_qty * d_entry
+        if actual_notional < trade_min_usdt:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=0.0,
+                effective_leverage=0,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=f"Effective notional {actual_notional:.2f} USDT is below tradeMinUSDT ({trade_min_usdt} USDT)."
+            )
+
+        # 3. Dynamic leverage adjustment for liquidation safety
+        max_safe_lev = int(Decimal(str(MAX_RISK_PCT_OF_MARGIN)) / Decimal(str(sl_pct))) if sl_pct > 0 else max_allowed_leverage
+        effective_leverage = min(target_leverage, pair_max_leverage, max_allowed_leverage, max_safe_lev)
+        if effective_leverage < 1:
+            effective_leverage = 1
+
+        required_margin = actual_notional / Decimal(str(effective_leverage))
+        if max_margin_usdt is not None and required_margin > Decimal(str(max_margin_usdt)):
+            highest_safe_lev = min(pair_max_leverage, max_allowed_leverage, max_safe_lev)
+            lowest_possible_margin = actual_notional / Decimal(str(highest_safe_lev))
+            if lowest_possible_margin <= Decimal(str(max_margin_usdt)):
+                effective_leverage = highest_safe_lev
+                required_margin = lowest_possible_margin
+            else:
+                return SizingResult(
+                    symbol=symbol,
+                    target_margin=float(required_margin),
+                    effective_leverage=effective_leverage,
+                    entry_price=current_price,
+                    notional_value=float(actual_notional),
+                    quantity=float(d_qty),
+                    is_valid=False,
+                    rejection_reason=(
+                        f"Required margin {required_margin:.2f} USDT exceeds max_margin_usdt ({max_margin_usdt:.2f} USDT)."
+                    )
+                )
+
+        if dir_norm == "LONG":
+            d_sl_dist = d_entry - d_sl
+            d_tp_dist = d_tp - d_entry
+            oriented = (d_sl < d_entry < d_tp)
+        else:
+            d_sl_dist = d_sl - d_entry
+            d_tp_dist = d_entry - d_tp
+            oriented = (d_tp < d_entry < d_sl)
+
+        if not oriented or d_sl_dist <= Decimal("0") or d_tp_dist <= Decimal("0"):
+            return SizingResult(
+                symbol=symbol,
+                target_margin=float(required_margin),
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=f"Incorrectly oriented quantized SL/TP (SL: {sl_price}, TP: {tp_price}, entry: {current_price}) for {dir_norm}."
+            )
+
+        effective_rr = d_tp_dist / d_sl_dist
+        if effective_rr < MIN_TARGET_RR:
+            return SizingResult(
+                symbol=symbol,
+                target_margin=float(required_margin),
+                effective_leverage=effective_leverage,
+                entry_price=current_price,
+                notional_value=float(actual_notional),
+                quantity=float(d_qty),
+                is_valid=False,
+                rejection_reason=f"Effective R:R {effective_rr:.4f} is below minimum 2.0 guardrail."
+            )
+
+        risk_pct_of_margin = round(sl_pct * effective_leverage, 2)
+        profit_usdt = float(d_qty * d_tp_dist)
+
+        return SizingResult(
+            symbol=symbol,
+            target_margin=round(float(required_margin), 4),
+            effective_leverage=effective_leverage,
+            entry_price=current_price,
+            notional_value=float(actual_notional),
+            quantity=float(d_qty),
+            is_valid=True,
+            rejection_reason="",
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,
+            risk_reward_ratio=round(float(effective_rr), 4),
+            risk_amount_usdt=round(float(actual_risk), 2),
             potential_profit_usdt=round(profit_usdt, 2),
             sl_percent=sl_pct,
             tp_percent=tp_pct,

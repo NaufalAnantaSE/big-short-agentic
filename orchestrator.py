@@ -55,6 +55,7 @@ class SessionState(BaseModel):
     universe_mode: str = "PUMP_GAINERS"
     executed_symbols: List[str] = Field(default_factory=list)
     started_at: float = 0.0
+    risk_budget_per_trade: Optional[float] = None
 
 
 MAX_TRIAGE_CANDIDATES = 12
@@ -79,7 +80,8 @@ class SessionOrchestrator:
         execution_mode: str = ExecutionMode.EXCHANGE_DEMO.value,
         direction_mode: str = DirectionMode.SHORT.value,
         exit_policy: str = ExitPolicy.MANUAL_ONLY.value,
-        universe_mode: str = "PUMP_GAINERS"
+        universe_mode: str = "PUMP_GAINERS",
+        risk_budget_per_trade: Optional[float] = None
     ) -> SessionState:
         """Initializes and activates a new entry session."""
         session_id = f"bx_sess_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -95,7 +97,8 @@ class SessionOrchestrator:
             direction_mode=direction_mode,
             exit_policy=exit_policy,
             universe_mode=universe_mode,
-            started_at=time.time()
+            started_at=time.time(),
+            risk_budget_per_trade=risk_budget_per_trade
         )
         AuditLogger.log_event("SESSION_START", {
             "margin_per_pos": margin_per_pos,
@@ -227,6 +230,7 @@ class SessionOrchestrator:
                 effective_target_lev = max(1, max_safe_lev)
 
         margin_per_pos = self.current_session.margin_per_pos if self.current_session else 5.0
+        risk_budget = getattr(self.current_session, "risk_budget_per_trade", None)
         if pos_dir in ("LONG", "SHORT"):
             sizing = SizingCalculator.calculate_lot(
                 symbol=cand.symbol,
@@ -237,7 +241,8 @@ class SessionOrchestrator:
                 max_allowed_leverage=20,
                 direction=pos_dir,
                 atr=atr_val,
-                target_rr=target_rr
+                target_rr=target_rr,
+                risk_budget_usdt=risk_budget
             )
         else:
             sizing = SizingResult(
@@ -344,7 +349,8 @@ class SessionOrchestrator:
                         max_allowed_leverage=20,
                         direction=pos_dir,
                         atr=atr_val,
-                        target_rr=target_rr
+                        target_rr=target_rr,
+                        risk_budget_usdt=risk_budget
                     )
                     if not sizing.is_valid:
                         veto_reason = f"resizing_invalid:{sizing.rejection_reason}"
@@ -641,7 +647,8 @@ class SessionOrchestrator:
                         max_allowed_leverage=20,
                         direction=entry.direction,
                         atr=entry.atr if entry.atr > 0 else None,
-                        target_rr=entry.target_rr
+                        target_rr=entry.target_rr,
+                        risk_budget_usdt=getattr(self.current_session, "risk_budget_per_trade", None)
                     )
 
                     if sizing.is_valid:
