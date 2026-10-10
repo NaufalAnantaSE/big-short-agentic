@@ -582,10 +582,15 @@ class SessionOrchestrator:
                 w_depth = self.client.get_depth(entry.symbol, limit=5)
                 bids = w_depth.get("bids", []) if isinstance(w_depth, dict) else []
                 asks = w_depth.get("asks", []) if isinstance(w_depth, dict) else []
-                bid1 = float(bids[0][0]) if bids else entry.initial_price
-                ask1 = float(asks[0][0]) if asks else entry.initial_price
-                w_curr_price = (bid1 + ask1) / 2.0 if bid1 > 0 and ask1 > 0 else entry.initial_price
-                w_spread = ((ask1 - bid1) / bid1) * 100.0 if bid1 > 0 else 0.0
+                if not bids or not asks:
+                    # P0-5: Fail-closed on missing orderbook depth; do not fabricate 0.0% spread
+                    continue
+                bid1 = float(bids[0][0]) if bids and len(bids[0]) > 0 else 0.0
+                ask1 = float(asks[0][0]) if asks and len(asks[0]) > 0 else 0.0
+                if bid1 <= 0 or ask1 <= 0:
+                    continue
+                w_curr_price = (bid1 + ask1) / 2.0
+                w_spread = ((ask1 - bid1) / bid1) * 100.0
 
                 should_evict, evict_reason, trigger_res = self.watchlist.check_deterministic_reversal(
                     entry=entry,
@@ -607,6 +612,23 @@ class SessionOrchestrator:
                         "reasons": trigger_res.reasons
                     }, session_id=self.current_session.session_id)
 
+                    session_dir = getattr(self.current_session, "direction_mode", "SHORT")
+                    if session_dir != "BOTH" and entry.direction.upper() != session_dir:
+                        AuditLogger.log_event("WATCHLIST_VETO", {
+                            "symbol": entry.symbol,
+                            "reason": f"direction_mismatch:entry={entry.direction},session={session_dir}"
+                        }, session_id=session_id)
+                        continue
+
+                    if trigger_res.trigger_price > 0:
+                        drift = abs(w_curr_price - trigger_res.trigger_price) / trigger_res.trigger_price
+                        if drift > 0.005:
+                            AuditLogger.log_event("WATCHLIST_VETO", {
+                                "symbol": entry.symbol,
+                                "reason": f"PRICE_DRIFT_EXCEEDED:drift={drift*100:.2f}%"
+                            }, session_id=session_id)
+                            continue
+
                     contracts = self.client.get_contracts()
                     contract_info = next((c for c in contracts if c.get("symbol") == entry.symbol), {})
 
@@ -619,7 +641,7 @@ class SessionOrchestrator:
                         max_allowed_leverage=20,
                         direction=entry.direction,
                         atr=entry.atr if entry.atr > 0 else None,
-                        target_rr=2.0
+                        target_rr=entry.target_rr
                     )
 
                     if sizing.is_valid:
@@ -647,7 +669,7 @@ class SessionOrchestrator:
                             "ai_decision": "ENTER_SHORT" if target_pos_side == "SHORT" else "ENTER_LONG",
                             "ai_confidence": entry.conviction_score,
                             "ai_evidence": f"[WATCHLIST_TRIGGER {trigger_res.pattern}] {trigger_res.evidence}",
-                            "playbook": None,
+                            "playbook": entry.playbook,
                             "sizing": sizing.model_dump(),
                             "stop_loss_price": sizing.stop_loss_price,
                             "take_profit_price": sizing.take_profit_price,

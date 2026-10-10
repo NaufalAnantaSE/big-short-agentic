@@ -25,6 +25,7 @@ class WatchlistEntry(BaseModel):
     playbook: Optional[str] = None
     atr: float = 0.0
     direction: str = "SHORT"
+    target_rr: float = 2.0
     margin_per_pos: float = 5.0
     leverage: int = 20
     stop_loss_price: Optional[float] = None
@@ -71,6 +72,7 @@ class WatchlistManager:
         playbook: Optional[str] = None,
         atr: float = 0.0,
         direction: str = "SHORT",
+        target_rr: float = 2.0,
         margin_per_pos: float = 5.0,
         leverage: int = 20,
         stop_loss_price: Optional[float] = None,
@@ -124,6 +126,7 @@ class WatchlistManager:
             playbook=playbook,
             atr=atr,
             direction=direction,
+            target_rr=target_rr,
             margin_per_pos=margin_per_pos,
             leverage=leverage,
             stop_loss_price=stop_loss_price,
@@ -250,9 +253,9 @@ class WatchlistManager:
         if now - entry.entered_at >= entry.ttl_seconds:
             return True, "TTL_EXPIRED", ReversalTriggerResult(triggered=False, evidence="TTL expired (30m)")
 
-        # 2. Spread Blowout (>0.40%)
-        if current_spread_pct > 0.40:
-            return True, "SPREAD_BLOWOUT", ReversalTriggerResult(triggered=False, evidence=f"Spread too wide ({current_spread_pct}% > 0.40%)")
+        # 2. Spread Blowout (>0.35%) - standardized parity with scanner/hard gate
+        if current_spread_pct > 0.35:
+            return True, "SPREAD_BLOWOUT", ReversalTriggerResult(triggered=False, evidence=f"Spread too wide ({current_spread_pct:.4f}% > 0.35%)")
 
         has_timestamps = any(c.get("time") is not None or c.get("timestamp") is not None for c in (klines_15m or []))
         if has_timestamps:
