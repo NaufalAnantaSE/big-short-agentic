@@ -133,6 +133,47 @@ class BingXClient:
         params = {"symbol": symbol, "side": side, "leverage": leverage}
         return self._request("POST", "/openApi/swap/v2/trade/leverage", params=params, signed=True)
 
+    def get_income(
+        self,
+        symbol: Optional[str] = None,
+        income_type: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: int = 100
+    ) -> list:
+        """Queries user income history (realized PnL, funding fees, trading fees)."""
+        params: Dict[str, Any] = {"limit": min(limit, 100)}
+        if symbol:
+            params["symbol"] = symbol
+        if income_type:
+            params["incomeType"] = income_type
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
+        res = self._request("GET", "/openApi/swap/v2/user/income", params=params, signed=True)
+        return res if isinstance(res, list) else []
+
+    def get_all_orders(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: int = 100
+    ) -> list:
+        """Queries order history for a symbol."""
+        params: Dict[str, Any] = {"symbol": symbol, "limit": min(limit, 100)}
+        if order_id:
+            params["orderId"] = order_id
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
+        res = self._request("GET", "/openApi/swap/v2/trade/allOrders", params=params, signed=True)
+        orders = res.get("orders", []) if isinstance(res, dict) else res
+        return orders if isinstance(orders, list) else []
+
     # ==================== Market Data Queries ====================
 
     def get_contracts(self) -> list:

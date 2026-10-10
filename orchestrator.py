@@ -3,6 +3,7 @@
 import time
 import uuid
 import threading
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
@@ -68,6 +69,8 @@ class SessionState(BaseModel):
     consecutive_losses: int = 0
     max_consecutive_losses: int = 3
     cooldown_until: float = 0.0
+    last_pnl_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    processed_income_ids: List[str] = Field(default_factory=list)
 
 
 MAX_TRIAGE_CANDIDATES = 12
@@ -179,6 +182,81 @@ class SessionOrchestrator:
                 }, session_id=self.current_session.session_id)
         elif realized_pnl > 0:
             self.current_session.consecutive_losses = 0
+
+    def reconcile_outcomes(self) -> None:
+        """
+        F-06: Ingests closed trade outcomes from BingX income API,
+        attributes realized PnL to the active session, enforces day-boundary reset,
+        and deduplicates income events.
+        """
+        if not self.current_session:
+            return
+
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.current_session.last_pnl_date != today_str:
+            AuditLogger.log_event("DAY_BOUNDARY_RESET", {
+                "prev_date": self.current_session.last_pnl_date,
+                "new_date": today_str,
+                "prev_daily_pnl": self.current_session.daily_realized_pnl
+            }, session_id=self.current_session.session_id)
+            self.current_session.daily_realized_pnl = 0.0
+            self.current_session.consecutive_losses = 0
+            self.current_session.last_pnl_date = today_str
+
+        start_ts = int(self.current_session.started_at * 1000) if self.current_session.started_at > 0 else None
+        try:
+            incomes = self.client.get_income(
+                income_type="REALIZED_PNL",
+                start_time=start_ts
+            )
+        except Exception as e:
+            AuditLogger.log_event("INCOME_INGESTION_ERROR", {"error": str(e)}, session_id=self.current_session.session_id)
+            return
+
+        if not incomes or not isinstance(incomes, list):
+            return
+
+        sorted_incomes = sorted(incomes, key=lambda x: int(x.get("time", 0)))
+        for inc in sorted_incomes:
+            if not isinstance(inc, dict):
+                continue
+            inc_id = str(inc.get("incomeId") or inc.get("tradeId") or inc.get("time") or "")
+            if not inc_id or inc_id in self.current_session.processed_income_ids:
+                continue
+
+            sym = inc.get("symbol", "")
+            if self.current_session.executed_symbols and sym not in self.current_session.executed_symbols:
+                continue
+
+            try:
+                val = float(inc.get("income", 0.0))
+            except (ValueError, TypeError):
+                continue
+
+            self.record_trade_outcome(symbol=sym, realized_pnl=val)
+            self.current_session.processed_income_ids.append(inc_id)
+
+            AuditLogger.log_event("TRADE_OUTCOME_INGESTED", {
+                "symbol": sym,
+                "income_id": inc_id,
+                "realized_pnl": val,
+                "session_daily_pnl": self.current_session.daily_realized_pnl,
+                "consecutive_losses": self.current_session.consecutive_losses
+            }, session_id=self.current_session.session_id)
+
+        try:
+            import json
+            import db
+            db.update_session_pnl_state(
+                session_id=self.current_session.session_id,
+                daily_realized_pnl=self.current_session.daily_realized_pnl,
+                consecutive_losses=self.current_session.consecutive_losses,
+                cooldown_until=self.current_session.cooldown_until,
+                last_pnl_date=self.current_session.last_pnl_date,
+                processed_income_ids=json.dumps(self.current_session.processed_income_ids)
+            )
+        except Exception:
+            pass
 
     def _evaluate_and_execute_candidate(
         self,
@@ -624,6 +702,9 @@ class SessionOrchestrator:
 
         session_id = self.current_session.session_id
         cycle_gen = getattr(self.current_session, "generation_token", "")
+
+        # F-06: Automatically reconcile closed positions and outcomes before evaluating gates
+        self.reconcile_outcomes()
 
         # P1-3: Daily loss limit check
         max_allowed_loss = self.current_session.strategy_capital_usdt * (self.current_session.max_daily_loss_pct / 100.0)

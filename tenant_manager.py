@@ -277,6 +277,20 @@ class TenantSessionManager:
 
         if current_sess:
             current_sess.filled_count = active_count
+            if latest_db_sess:
+                if latest_db_sess.get("daily_realized_pnl") is not None:
+                    current_sess.daily_realized_pnl = float(latest_db_sess["daily_realized_pnl"])
+                if latest_db_sess.get("consecutive_losses") is not None:
+                    current_sess.consecutive_losses = int(latest_db_sess["consecutive_losses"])
+                if latest_db_sess.get("cooldown_until") is not None:
+                    current_sess.cooldown_until = float(latest_db_sess["cooldown_until"])
+                if latest_db_sess.get("last_pnl_date"):
+                    current_sess.last_pnl_date = str(latest_db_sess["last_pnl_date"])
+                if latest_db_sess.get("processed_income_ids"):
+                    try:
+                        current_sess.processed_income_ids = json.loads(latest_db_sess["processed_income_ids"])
+                    except Exception:
+                        pass
             quota = current_sess.quota
             margin_per_pos = current_sess.margin_per_pos
             leverage = current_sess.leverage
