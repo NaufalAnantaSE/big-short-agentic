@@ -15,7 +15,7 @@ def test_dialectical_deep_evaluation_replaces_adversarial_loop(mocker):
                     '{"decision":"ENTER_SHORT","confidence":88,"setup_type":"PUMP_EXHAUSTION",'
                     '"bull_thesis":"Momentum still high","bear_thesis":"Extreme wick rejection on 15m",'
                     '"synthesis":"Bear exhaustion outweighs squeeze risk","key_evidence":"Wick + volume fade",'
-                    '"risk_factors":"Low OI"}'
+                    '"risk_factors":"Low OI","invalidation_risk_present":false}'
                 )
             }
         }],

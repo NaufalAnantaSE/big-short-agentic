@@ -14,7 +14,7 @@ def test_ai_valid_short_response(mocker):
     mock_resp.json.return_value = {
         "choices": [{
             "message": {
-                "content": '{"symbol": "1000PEPE-USDT", "decision": "ENTER_SHORT", "confidence": 85, "setup_type": "PUMP_EXHAUSTION", "key_evidence": "Buyer drop after 15% spike", "risk_factors": "none"}'
+                "content": '{"symbol": "1000PEPE-USDT", "decision": "ENTER_SHORT", "confidence": 85, "setup_type": "PUMP_EXHAUSTION", "key_evidence": "Buyer drop after 15% spike", "risk_factors": "none", "invalidation_risk_present": false}'
             }
         }]
     }

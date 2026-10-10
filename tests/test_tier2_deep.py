@@ -29,7 +29,8 @@ def test_evaluate_deep_candidate_single_call_dual_thesis(mocker):
                     "bull_thesis": "Potential short squeeze if volume sustains above resistance",
                     "bear_thesis": "Buyer dry-up, long upper rejection wick on 15m, funding at -0.0005",
                     "key_evidence": "Rejection wick confirmed with declining buying volume",
-                    "risk_factors": "High volatility memecoin"
+                    "risk_factors": "High volatility memecoin",
+                    "invalidation_risk_present": False
                 })
             }
         }],

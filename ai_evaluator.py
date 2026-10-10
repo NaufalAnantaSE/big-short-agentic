@@ -35,6 +35,56 @@ def extract_json_from_llm(content: str) -> Dict[str, Any]:
     raise ValueError(f"Could not parse valid JSON from response: {content[:150]}")
 
 
+def _parse_tristate_flag(raw: Any) -> Optional[bool]:
+    """
+    P1-2: parses an explicit yes/no answer into True/False, and anything ambiguous into
+    None. None is not a neutral value: the gate treats it as UNKNOWN and fails closed.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        if raw == 1:
+            return True
+        if raw == 0:
+            return False
+        return None
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in ("yes", "y", "true", "t", "1", "ya", "present"):
+        return True
+    if text in ("no", "n", "false", "f", "0", "tidak", "absent", "none", "null"):
+        return False
+    return None
+
+
+# P1-2: rebuttal text that carries no argument. Rejected so an ENTER cannot be
+# authorized by a placeholder.
+_REBUTTAL_PLACEHOLDERS = {
+    "", "-", "--", "n/a", "na", "none", "null", "nil", "no", "yes", "unknown",
+    "tbd", "todo", "?", "??", "???", "nothing", "not applicable",
+}
+# Rebuttals must contain an actual argument, not a bare denial.
+_REBUTTAL_MIN_CHARS = 15
+
+
+def is_substantive_rebuttal(text: Any) -> bool:
+    """
+    P1-2: a rebuttal counts only if it states something beyond a placeholder or a bare
+    denial. This is a shape check on the model's own structured answer, not keyword
+    matching over free-text risk description.
+    """
+    if text is None:
+        return False
+    cleaned = " ".join(str(text).split()).strip()
+    lowered = cleaned.lower().strip(" .!;:-")
+    if lowered in _REBUTTAL_PLACEHOLDERS:
+        return False
+    if len(lowered) < _REBUTTAL_MIN_CHARS:
+        return False
+    return True
+
+
 def normalize_ai_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
     decision = str(parsed.get("decision", "")).upper()
     decision_map = {
@@ -83,13 +133,63 @@ def normalize_ai_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
     confidence = max(0, min(100, confidence))
     key_evidence = str(parsed.get("key_evidence", parsed.get("reasoning", parsed.get("evidence", ""))))
     risk_factors = str(parsed.get("risk_factors", parsed.get("risks", parsed.get("risk_assessment", ""))))
+
+    # P1-2: structured invalidation-contradiction answers. The model is asked explicitly
+    # whether any risk factor invalidates the setup, and to rebut it if so. An absent or
+    # ambiguous answer stays None (UNKNOWN) so the gate can fail closed.
+    flag_raw = parsed.get(
+        "invalidation_risk_present",
+        parsed.get("invalidating_risk_present", parsed.get("has_invalidating_risk")),
+    )
+    invalidation_risk_present = _parse_tristate_flag(flag_raw)
+    invalidation_risk_detail = str(parsed.get(
+        "invalidation_risk_detail",
+        parsed.get("invalidating_risk_detail", parsed.get("which_invalidating_risk", "")),
+    ) or "")
+    invalidation_rebuttal = str(parsed.get(
+        "invalidation_rebuttal",
+        parsed.get("invalidating_risk_rebuttal", parsed.get("rebuttal", "")),
+    ) or "")
+
     return {
         **parsed,
         "decision": decision,
         "confidence": confidence,
         "key_evidence": key_evidence,
-        "risk_factors": risk_factors
+        "risk_factors": risk_factors,
+        "invalidation_risk_present": invalidation_risk_present,
+        "invalidation_risk_detail": invalidation_risk_detail,
+        "invalidation_rebuttal": invalidation_rebuttal,
     }
+
+
+def apply_invalidation_gate(result: "AIEvaluationResult") -> tuple[str, Optional[str]]:
+    """
+    P1-2 extension: blocks ENTER when the model's own structured answer reports an
+    invalidation risk it has not rebutted.
+
+    Returns (final_decision, downgrade_reason). Reason is None when nothing changed.
+
+    Fail-closed rules, in order:
+      - only ENTER_* decisions are gated; WAIT/SKIP pass through untouched;
+      - answer absent/ambiguous (None) -> downgrade to WAIT (cannot authorize on silence);
+      - answer True with no substantive rebuttal -> downgrade to WAIT;
+      - answer True WITH substantive rebuttal -> ENTER allowed;
+      - answer False -> ENTER allowed.
+    """
+    decision = str(getattr(result, "decision", "") or "")
+    if decision not in ("ENTER_SHORT", "ENTER_LONG"):
+        return decision, None
+
+    present = getattr(result, "invalidation_risk_present", None)
+    rebuttal = getattr(result, "invalidation_rebuttal", "") or ""
+
+    if present is None:
+        return "WAIT", "invalidating_risk_answer_missing"
+    if present is True and not is_substantive_rebuttal(rebuttal):
+        detail = (getattr(result, "invalidation_risk_detail", "") or "").strip()
+        return "WAIT", f"invalidating_risk_unrebutted:{detail[:120]}" if detail else "invalidating_risk_unrebutted"
+    return decision, None
 
 
 def aggregate_usage(usages: list[Dict[str, Any]]) -> Dict[str, int]:
@@ -347,7 +447,12 @@ def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SH
         f"Evaluation Directives:\n"
         f"1. Bull Thesis (Squeeze Defender): Identify buyer momentum, breakout risks, negative funding squeeze traps, or lack of clear rejection.\n"
         f"2. Bear Thesis (Short Hunter): Identify buyer dry-up, upper wick rejections, volume divergence, or resistance breaks.\n"
-        f"3. Synthesis Decision:\n"
+        f"3. Contradiction Audit (MANDATORY, answer explicitly):\n"
+        f"   - State every risk factor you identified that would INVALIDATE this setup (e.g. a level whose loss voids the thesis, a squeeze/stop-run condition, a structural breakdown against the position).\n"
+        f"   - Then answer explicitly: does ANY of those risks invalidate the setup as it stands right now?\n"
+        f"   - If yes, you MUST provide a concrete, factual rebuttal that explains why the setup still holds despite that risk. A bare denial, a placeholder, or an empty string is NOT a rebuttal.\n"
+        f"   - If you cannot rebut an invalidating risk, you MUST NOT authorize an entry: return WAIT.\n"
+        f"4. Synthesis Decision:\n"
         f"   - {synthesis_auth}\n"
         f"   - If setup is promising but needs further price action, return WAIT.\n"
         f"   - If continuation or squeeze risk dominates, return SKIP.\n\n"
@@ -357,7 +462,10 @@ def build_structured_deep_prompt(candidate: Dict[str, Any], direction: str = "SH
         f'"bull_thesis": "<squeeze defender argument>", '
         f'"bear_thesis": "<short hunter argument>", '
         f'"key_evidence": "<synthesized decisive reason>", '
-        f'"risk_factors": "<dominant risks>"}}'
+        f'"risk_factors": "<dominant risks>", '
+        f'"invalidation_risk_present": true | false, '
+        f'"invalidation_risk_detail": "<which risk factor would invalidate the setup, or empty if none>", '
+        f'"invalidation_rebuttal": "<concrete factual rebuttal if invalidation_risk_present is true, else empty>"}}'
     )
 
 
@@ -400,6 +508,12 @@ class AIEvaluationResult(BaseModel):
     setup_type: str = "NONE"
     key_evidence: str = ""
     risk_factors: str = ""
+    # P1-2 extension: structured answers about internal contradiction.
+    # `invalidation_risk_present` is tri-state: True / False / None(=UNKNOWN, fails closed).
+    invalidation_risk_present: Optional[bool] = None
+    invalidation_risk_detail: str = ""
+    invalidation_rebuttal: str = ""
+    gate_downgrade_reason: str = ""
     raw_response: str = ""
     is_valid: bool = False
     error_message: str = ""
@@ -588,18 +702,29 @@ class AIEvaluator:
             if bull_t or bear_t:
                 evidence = f"[Dual-Thesis] Bear: {bear_t} | Bull: {bull_t} => {evidence}"
 
-            return AIEvaluationResult(
+            result = AIEvaluationResult(
                 symbol=symbol,
                 decision=decision,
                 confidence=confidence,
                 setup_type=str(normalized.get("setup_type", "NONE")),
                 key_evidence=evidence[:400],
                 risk_factors=str(normalized.get("risk_factors", "")),
+                invalidation_risk_present=normalized.get("invalidation_risk_present"),
+                invalidation_risk_detail=str(normalized.get("invalidation_risk_detail", "")),
+                invalidation_rebuttal=str(normalized.get("invalidation_rebuttal", "")),
                 raw_response=json.dumps(parsed),
                 is_valid=True,
                 usage=usage,
                 latency_ms=dt,
             )
+            # P1-2 extension: the model's own structured answer decides. An ENTER whose
+            # invalidation risk is unrebutted (or unanswered) is downgraded to WAIT.
+            gated_decision, gate_reason = apply_invalidation_gate(result)
+            result.decision = gated_decision
+            if gate_reason:
+                result.gate_downgrade_reason = gate_reason
+                result.key_evidence = f"[INVALIDATION_GATE:{gate_reason}] {result.key_evidence}"[:400]
+            return result
         except Exception as exc:
             return AIEvaluationResult(
                 symbol=symbol,
@@ -650,10 +775,13 @@ class AIEvaluator:
             f"- If price shows signs of seller emergence, buyer dry-up, or local exhaustion, recommend ENTER_SHORT with realistic confidence (60-95).\n"
             f"- If price shows signs of buyer emergence, seller exhaustion, or oversold bounce / support hold, recommend ENTER_LONG with realistic confidence (60-95).\n"
             f"- If momentum is still strongly upward without rejection, recommend WAIT.\n"
-            f"- If market is too illiquid or high risk, recommend SKIP.\n\n"
+            f"- If market is too illiquid or high risk, recommend SKIP.\n"
+            f"- Contradiction Audit (MANDATORY): state any risk factor that would INVALIDATE this setup, then answer explicitly whether any of them invalidates it right now. If yes, you MUST give a concrete factual rebuttal; a bare denial or empty string is NOT a rebuttal. If you cannot rebut it, do NOT enter: return WAIT.\n\n"
             f"Output REQUIREMENT: You MUST respond ONLY with a raw JSON object (no markdown, no code blocks, no prose):\n"
             f'{{"symbol": "{symbol}", "decision": "ENTER_SHORT" | "ENTER_LONG" | "WAIT" | "SKIP", "confidence": <int 0-100>, '
-            f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<short reason>", "risk_factors": "<risks>"}}'
+            f'"setup_type": "PUMP_EXHAUSTION" | "BREAKDOWN_RETEST" | "NONE", "key_evidence": "<short reason>", "risk_factors": "<risks>", '
+            f'"invalidation_risk_present": true | false, "invalidation_risk_detail": "<which risk would invalidate, or empty>", '
+            f'"invalidation_rebuttal": "<concrete factual rebuttal if true, else empty>"}}'
         )
 
         payload = {
@@ -692,18 +820,29 @@ class AIEvaluator:
             if decision in ("ENTER_SHORT", "ENTER_LONG") and confidence < 70:
                 decision = "WAIT"
 
-            return AIEvaluationResult(
+            result = AIEvaluationResult(
                 symbol=symbol,
                 decision=decision,
                 confidence=confidence,
                 setup_type=str(parsed.get("setup_type", "NONE")),
                 key_evidence=str(parsed.get("key_evidence", "")),
                 risk_factors=str(parsed.get("risk_factors", "")),
+                invalidation_risk_present=parsed.get("invalidation_risk_present"),
+                invalidation_risk_detail=str(parsed.get("invalidation_risk_detail", "")),
+                invalidation_rebuttal=str(parsed.get("invalidation_rebuttal", "")),
                 raw_response=content,
                 is_valid=True,
                 usage=usage,
                 latency_ms=latency_ms
             )
+            # P1-2 extension: same gate on the single-shot fallback path so every
+            # execution route enforces the same contradiction rule.
+            gated_decision, gate_reason = apply_invalidation_gate(result)
+            result.decision = gated_decision
+            if gate_reason:
+                result.gate_downgrade_reason = gate_reason
+                result.key_evidence = f"[INVALIDATION_GATE:{gate_reason}] {result.key_evidence}"[:400]
+            return result
 
         except httpx.TimeoutException:
             # Fail closed on timeout

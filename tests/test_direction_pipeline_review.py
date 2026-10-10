@@ -71,7 +71,7 @@ def test_evaluate_candidate_n2_supports_enter_long_schema_and_execution(mocker):
     mock_resp.json.return_value = {
         "choices": [{
             "message": {
-                "content": '{"symbol": "SOL-USDT", "decision": "ENTER_LONG", "confidence": 80, "setup_type": "OVERSOLD_BOUNCE", "key_evidence": "Reversal at key support", "risk_factors": "BTC dump"}'
+                "content": '{"symbol": "SOL-USDT", "decision": "ENTER_LONG", "confidence": 80, "setup_type": "OVERSOLD_BOUNCE", "key_evidence": "Reversal at key support", "risk_factors": "BTC dump", "invalidation_risk_present": false}'
             }
         }],
         "usage": {"total_tokens": 150}
