@@ -95,15 +95,15 @@ Tindak lanjut: tetapkan buffer pada konfigurasi produksi, pastikan konsisten di 
 
 **SUDAH DIPERBAIKI (`2151599`).** `PRODUCTION_CANDLE_BUFFER_MS = 5000` kini diterapkan di `build_candidate_features`, jalur scan `orchestrator.py` (yang sebelumnya mengirim AI `limit=10` termasuk bar berjalan), dan `check_deterministic_reversal` watchlist. Kedalaman kline produksi dinaikkan ke `PRODUCTION_KLINE_LIMIT = 120`. Regression: `test_phase2_indicators.py::test_ema_trend_invalid_below_warmup` dan fixture 60 bar pada test Phase 2.
 
-### F-02 — Generation check belum menghilangkan race stop/submit
+### F-02 — Generation check belum menghilangkan race stop/submit — **FIXED (`0512374`)**
 
 Bukti: `orchestrator.py:126`, `396–465`, `706–771`; pencarian `_session_lock`.
 
 Lock dipakai ketika stop, tetapi pemeriksaan token dan submit order berjalan di luar critical section yang sama. Terdapat panggilan `set_leverage` antara check dan `place_order`. Stop yang terjadi setelah check tetap berpotensi diikuti submit.
 
-Tindak lanjut: rancang sinkronisasi stop/submit yang konsisten. Tambahkan regression dengan barrier antar-thread yang menghentikan sesi setelah check atau saat leverage call, bukan hanya selama evaluasi AI.
+**SUDAH DIPERBAIKI (`0512374`).** `_session_lock` diubah menjadi `threading.RLock()` dengan helper atomik `_is_session_valid_for_execution(session_id, generation_token)`. Critical section membungkus validasi sesi dan pemanggilan `place_order` baik pada alur direct execution maupun watchlist reversal execution. Regression: `tests/test_f02_atomic_stop_submit.py` (3 test, RED → GREEN).
 
-### F-03 — Quote/fill dan jalur watchlist belum setara sepenuhnya
+### F-03 — Quote/fill dan jalur watchlist belum setara sepenuhnya — **FIXED (`8286193`)**
 
 Bukti: `orchestrator.py:350–394`, `475–494`, `650–799`.
 
@@ -111,15 +111,15 @@ Jalur direct melakukan drift gate dan resizing terhadap executable price. Namun,
 
 Watchlist masih melakukan sizing dengan `entry.atr` dan `entry.leverage`, memakai mid-price, serta memiliki blok submit tersendiri. Belum ada satu final-validation gateway yang membuktikan seluruh kebutuhan freshness/exposure/portfolio risk dilalui sama oleh direct, fallback, dan watchlist.
 
-Tindak lanjut: bedakan quote/request/actual fill; missing fill harus unknown/pending reconciliation, bukan nilai estimasi berlabel actual. Terapkan final gate bersama dan regression parity per jalur.
+**SUDAH DIPERBAIKI (`8286193`).** Fabrikasi fill rate dihapus total: jika bursa tidak mengembalikan average price terisi, sistem menandai order sebagai `PENDING_RECONCILIATION` dengan `actual_avg_price = None` dan `slippage = None`. Pada watchlist: sizing kini menggunakan executable price riil yang menyeberang spread (`bid1` untuk SHORT, `ask1` untuk LONG), dipasang spread blowout guard (`max_spread_pct`), anti-reentry guard (`executed_symbols`), dan pelacakan provenance `EXCHANGE_REPORTED` / `PENDING_RECONCILIATION`. Regression: `tests/test_f03_parity_and_fill_provenance.py` (6 test, RED → GREEN).
 
-### F-04 — Fixed-risk belum menjadi perilaku default aplikasi tenant
+### F-04 — Fixed-risk belum menjadi perilaku default aplikasi tenant — **FIXED (`1e89102`)**
 
 Bukti: `orchestrator.py:58`, `80–107`, `259`, `703`; `tenant_manager.py:357–387`.
 
 `risk_budget_per_trade` bersifat opsional dengan default `None`. Jalur start sesi tenant tidak meneruskannya. Formula fixed-risk tersedia, tetapi klaim semua trade memakai risiko tetap $2 tidak benar; $2 berasal dari skenario uji, bukan konfigurasi universal yang terverifikasi.
 
-Tindak lanjut: sambungkan parameter dari API/config ke session state, persistence, rehydration, dan kedua jalur sizing. Verifikasi batas margin/notional, biaya, rounding, dan penolakan setup yang tidak memenuhi budget.
+**SUDAH DIPERBAIKI (`1e89102`).** Parameter diintegrasikan dari `AppConfig.default_risk_budget_usdt = 2.0`, `SessionStartRequest`, `TenantSessionManager.start_session(..., risk_budget_per_trade=2.0)`, persistensi kolom `risk_budget_per_trade` pada tabel `sessions`, pemulihan saat restart/rehidrasi tenant, serta kedua jalur sizing (direct dan watchlist staging). Setup yang melanggar toleransi risiko fixed-risk (+-10%) otomatis ditolak (fail-closed). Regression: `tests/test_f04_fixed_risk_tenant_defaults.py` (4 test, RED → GREEN).
 
 ### F-05 — Mandatory conditions belum mewajibkan seluruh pola inti — **FIXED (`49ea57c`)**
 
@@ -133,7 +133,7 @@ Tindak lanjut: reproduksi negatif tiap pola tanpa struktur inti dan pastikan dit
 
 **SUDAH DIPERBAIKI (`49ea57c`).** Tiga pola kini menuntut struktur inti penuh: PUMP_EXHAUSTION wajib bukti rejection fisik (wick/confluent rejection/divergence) — zona Fibonacci puncak saja tidak lagi memenuhi core gate; SUPPORT_PULLBACK wajib uptrend makro **dan** konfirmasi rebound; BREAKDOWN_RETEST wajib breakdown **dan** retest gagal. Regression: `tests/test_f05_playbook_mandatory_structure.py` (8 test, RED → GREEN). Dampak terukur pada keputusan nyata ada di bagian 10.
 
-### F-06 — Daily-loss/cooldown belum tersambung ke outcome trade produksi
+### F-06 — Daily-loss/cooldown belum tersambung ke outcome trade produksi — **FIXED (`6a5dd21`)**
 
 Bukti: `orchestrator.py:140–158`, `576–600`, `327–328`; pencarian caller `record_trade_outcome` dan penulisan `daily_realized_pnl`.
 
@@ -141,7 +141,7 @@ Helper outcome menambah PnL dan loss streak. Namun pencarian sumber Python tidak
 
 Anti-reentry terlihat pada evaluasi direct; paritas pada watchlist dan pemulihan setelah restart belum terbukti. Max total risk-at-stop konkuren dan batas konsentrasi arah dari panduan belum ditunjukkan oleh perubahan ini.
 
-Tindak lanjut: integrasikan outcome yang teratribusi ke sesi, deduplikasi event, persistence, batas pergantian hari, serta restart recovery. Uji loss beruntun dari event fill sampai entry benar-benar berhenti.
+**SUDAH DIPERBAIKI (`6a5dd21`).** `BingXClient` diperkaya dengan query riil `/openApi/swap/v2/user/income` (realized PnL). `SessionOrchestrator.reconcile_outcomes()` otomatis mengatribusikan realized PnL pada simbol sesi aktif, mendeduplikasi income event via `processed_income_ids`, mereset loss streak dan PnL saat pergantian tanggal UTC (`DAY_BOUNDARY_RESET`), memicu cooldown saat loss streak tercapai, serta menghentikan seluruh siklus baru saat `max_daily_loss_pct` terlampaui. Status PnL dipersistensikan ke SQLite dan dipulihkan saat restart. Regression: `tests/test_f06_outcome_ingestion_and_daily_loss.py` (5 test, RED → GREEN).
 
 ### F-07 — Ledger lifecycle dan equity masih parsial; leverage memakai key keliru — **PARTIAL FIX (`89936f6`)**
 
