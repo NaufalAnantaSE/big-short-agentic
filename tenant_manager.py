@@ -17,6 +17,24 @@ from ai_settings import get_ai_settings
 from contracts import ExecutionMode, Environment, DirectionMode
 import db
 
+
+def _resolve_effective_leverage(sizing: Optional[Dict[str, Any]], session_leverage: int) -> int:
+    """
+    F-07: The order ledger must record the leverage actually used by the sizing engine.
+
+    SizingCalculator emits the key `effective_leverage`. A prior bug read a non-existent
+    `adaptive_leverage` key, so every order silently recorded the session-default leverage
+    and the adaptive leverage attribution was lost. Only a positive numeric value is
+    accepted; anything else falls back to the session leverage.
+    """
+    if isinstance(sizing, dict):
+        raw = sizing.get("effective_leverage")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            if raw > 0:
+                return int(raw)
+    return int(session_leverage)
+
+
 class TenantSessionManager:
     def __init__(self, base_config: AppConfig):
         self.base_config = base_config
@@ -721,7 +739,7 @@ class TenantSessionManager:
                     position_side=pos_side,
                     stop_loss_price=sl_price,
                     take_profit_price=tp_price,
-                    effective_leverage=sizing.get("adaptive_leverage") or orch.current_session.leverage,
+                    effective_leverage=_resolve_effective_leverage(sizing, orch.current_session.leverage),
                     quote_ts=ev.get("quote_ts"),
                     request_price=ev.get("request_price") or ev.get("price", 0.0),
                     avg_fill_price=ev.get("avg_fill_price") or ev.get("price", 0.0),
