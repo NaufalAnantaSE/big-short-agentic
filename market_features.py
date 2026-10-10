@@ -130,6 +130,17 @@ def _intrabar_row(
     return sorted(intrabars, key=lambda x: x["time"])[-1]
 
 
+def _calculate_true_range(high: float, low: float, prev_close: float | None = None) -> float:
+    """
+    P1-5: Calculates standard exchange True Range: max(H - L, |H - Cp|, |L - Cp|).
+    For the initial bar without prev_close, TR = H - L.
+    """
+    hl = high - low
+    if prev_close is None:
+        return hl
+    return max(hl, abs(high - prev_close), abs(low - prev_close))
+
+
 def _timeframe_features(
     rows: Iterable[Dict[str, Any]],
     now_ms: int,
@@ -144,10 +155,17 @@ def _timeframe_features(
     closes = [row["close"] for row in closed]
     volumes = [row["volume"] for row in closed]
     last = closed[-1]
-    ranges = [row["high"] - row["low"] for row in closed]
+    true_ranges = [
+        _calculate_true_range(
+            row["high"],
+            row["low"],
+            closed[i - 1]["close"] if i > 0 else None
+        )
+        for i, row in enumerate(closed)
+    ]
     upper_wick = last["high"] - max(last["open"], last["close"])
     last_range = max(last["high"] - last["low"], 1e-12)
-    avg_range = mean(ranges[-14:]) if ranges else 0.0
+    avg_range = mean(true_ranges[-14:]) if true_ranges else 0.0
     avg_close = mean(closes[-14:]) if closes else last["close"]
     vol_mean = mean(volumes[-20:]) if volumes else 0.0
     vol_std = pstdev(volumes[-20:]) if len(volumes[-20:]) > 1 else 0.0
@@ -489,8 +507,8 @@ def _calculate_ema(closes: List[float], period: int) -> float:
     return ema
 
 
-def _ema_trend_analysis(closed_rows: List[Dict[str, float]]) -> Dict[str, Any]:
-    if not closed_rows or len(closed_rows) < 3:
+def _ema_trend_analysis(closed_rows: List[Dict[str, float]], min_bars: int = 3) -> Dict[str, Any]:
+    if not closed_rows or len(closed_rows) < min_bars:
         return {
             "valid": False,
             "ema_20": 0.0,
