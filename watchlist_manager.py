@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from client import BingXClient
 from audit_logger import AuditLogger
+from market_features import _closed_rows
 
 
 class WatchlistEntry(BaseModel):
@@ -228,7 +229,8 @@ class WatchlistManager:
         entry: WatchlistEntry,
         klines_15m: List[Dict[str, Any]],
         current_price: float,
-        current_spread_pct: float
+        current_spread_pct: float,
+        now_ms: Optional[int] = None
     ) -> Tuple[bool, Optional[str], ReversalTriggerResult]:
         """
         Evaluates strict deterministic reversal confirmation and eviction conditions.
@@ -236,6 +238,7 @@ class WatchlistManager:
         """
         now = time.time()
         entry.last_checked_at = now
+        effective_now_ms = now_ms if now_ms is not None else int(now * 1000)
 
         # Update swing high
         entry.swing_high = max(entry.swing_high, current_price)
@@ -251,11 +254,17 @@ class WatchlistManager:
         if current_spread_pct > 0.40:
             return True, "SPREAD_BLOWOUT", ReversalTriggerResult(triggered=False, evidence=f"Spread too wide ({current_spread_pct}% > 0.40%)")
 
-        if not klines_15m or len(klines_15m) < 3:
+        has_timestamps = any(c.get("time") is not None or c.get("timestamp") is not None for c in (klines_15m or []))
+        if has_timestamps:
+            closed_klines = _closed_rows(klines_15m, now_ms=effective_now_ms, interval="15m")
+        else:
+            closed_klines = list(klines_15m or [])
+
+        if not closed_klines or len(closed_klines) < 3:
             return False, None, ReversalTriggerResult(triggered=False, evidence="Insufficient 15m candle history")
 
-        # Latest candle
-        latest_c = klines_15m[-1]
+        # Latest closed candle
+        latest_c = closed_klines[-1]
         try:
             open_p = float(latest_c.get("open", 0))
             high_p = float(latest_c.get("high", 0))
@@ -285,7 +294,7 @@ class WatchlistManager:
                 return True, "BREAKDOWN_INVALIDATION", ReversalTriggerResult(triggered=False, evidence="Closed >2% below breakdown invalidation level")
 
             # Metrics for LONG
-            window = klines_15m[-24:] if len(klines_15m) >= 24 else klines_15m
+            window = closed_klines[-24:] if len(closed_klines) >= 24 else closed_klines
             highs = [float(c.get("high", 0)) for c in window]
             lows = [float(c.get("low", 0)) for c in window]
             win_high = max(highs) if highs else high_p
@@ -296,9 +305,9 @@ class WatchlistManager:
             distance_from_low = (close_p - win_low) / swing_span
 
             candles_to_check = []
-            if len(klines_15m) >= 4:
-                candles_to_check.append((klines_15m[-2], "closed [-2]"))
-            candles_to_check.append((latest_c, "latest [-1]"))
+            candles_to_check.append((latest_c, "closed [-1]"))
+            if len(closed_klines) >= 4:
+                candles_to_check.append((closed_klines[-2], "closed [-2]"))
 
             # ----------------------------------------------------
             # PATTERN 1 (LONG): Lower Wick Rejection (Hammer / Bullish Bounce)
@@ -334,15 +343,15 @@ class WatchlistManager:
             # ----------------------------------------------------
             # PATTERN 2 (LONG): Local Break of Structure to Upside (Micro Breakout 15m)
             # ----------------------------------------------------
-            prev_1 = klines_15m[-2]
-            prev_2 = klines_15m[-3]
+            prev_1 = closed_klines[-2]
+            prev_2 = closed_klines[-3]
             try:
                 max_prev_high = max(float(prev_1.get("high", 0)), float(prev_2.get("high", 0)))
             except (ValueError, TypeError):
                 max_prev_high = high_p
 
             recent_vols = []
-            for c in klines_15m[-10:]:
+            for c in closed_klines[-10:]:
                 try:
                     recent_vols.append(float(c.get("volume", c.get("quoteVolume", 0))))
                 except Exception:
@@ -390,7 +399,7 @@ class WatchlistManager:
         effective_atr = entry.atr if entry.atr > 0 else total_range
 
         # Compute swing high and low across the available 15m window (up to 24 candles)
-        window = klines_15m[-24:] if len(klines_15m) >= 24 else klines_15m
+        window = closed_klines[-24:] if len(closed_klines) >= 24 else closed_klines
         highs = [float(c.get("high", 0)) for c in window]
         lows = [float(c.get("low", 0)) for c in window]
         win_high = max(highs) if highs else high_p
@@ -400,11 +409,11 @@ class WatchlistManager:
         # Fibonacci Retracement from local swing high (Fib safety gate: 0.0 at peak, 1.0 at base)
         retracement = (win_high - close_p) / swing_span
 
-        # Check both closed candle [-2] (if history allows) and latest candle [-1]
+        # Check both closed candle [-2] (if history allows) and latest closed candle [-1]
         candles_to_check = []
-        if len(klines_15m) >= 4:
-            candles_to_check.append((klines_15m[-2], "closed [-2]"))
-        candles_to_check.append((latest_c, "latest [-1]"))
+        candles_to_check.append((latest_c, "closed [-1]"))
+        if len(closed_klines) >= 4:
+            candles_to_check.append((closed_klines[-2], "closed [-2]"))
 
         # ----------------------------------------------------
         # PATTERN 1: Upper Wick Rejection (Exhaustion Reversal)
@@ -440,8 +449,8 @@ class WatchlistManager:
         # ----------------------------------------------------
         # PATTERN 2: Local Break of Structure (Micro Breakdown 15m)
         # ----------------------------------------------------
-        prev_1 = klines_15m[-2]
-        prev_2 = klines_15m[-3]
+        prev_1 = closed_klines[-2]
+        prev_2 = closed_klines[-3]
         try:
             min_prev_low = min(float(prev_1.get("low", 0)), float(prev_2.get("low", 0)))
         except (ValueError, TypeError):
@@ -449,7 +458,7 @@ class WatchlistManager:
 
         # Volume confirmation: >= 1.3x SMA(Volume, 10)
         recent_vols = []
-        for c in klines_15m[-10:]:
+        for c in closed_klines[-10:]:
             try:
                 recent_vols.append(float(c.get("volume", c.get("quoteVolume", 0))))
             except Exception:

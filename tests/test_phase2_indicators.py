@@ -96,13 +96,18 @@ def test_ema_and_macro_trend():
 
 def test_compute_market_features_includes_phase2_indicators():
     now = 1_700_000_000_000
-    candles = [
-        {"open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 100, "time": now - 180000},
-        {"open": 10.5, "high": 12, "low": 10, "close": 11.5, "volume": 300, "time": now - 120000},
-        {"open": 11.5, "high": 11.8, "low": 10.8, "close": 11.0, "volume": 80, "time": now - 60000},
+    candles_15m = [
+        {"open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 100, "time": now - 3 * 900_000 - 10_000},
+        {"open": 10.5, "high": 12, "low": 10, "close": 11.5, "volume": 300, "time": now - 2 * 900_000 - 10_000},
+        {"open": 11.5, "high": 11.8, "low": 10.8, "close": 11.0, "volume": 80, "time": now - 1 * 900_000 - 10_000},
+    ]
+    candles_1h = [
+        {"open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 100, "time": now - 3 * 3_600_000 - 10_000},
+        {"open": 10.5, "high": 12, "low": 10, "close": 11.5, "volume": 300, "time": now - 2 * 3_600_000 - 10_000},
+        {"open": 11.5, "high": 11.8, "low": 10.8, "close": 11.0, "volume": 80, "time": now - 1 * 3_600_000 - 10_000},
     ]
     features = compute_market_features(
-        candles_by_tf={"15m": candles, "1h": candles},
+        candles_by_tf={"15m": candles_15m, "1h": candles_1h},
         funding={"lastFundingRate": "0.0005", "updateTime": now - 1000},
         open_interest={"openInterest": "5000", "time": now - 1000},
         depth={"bids": [["10.99", "100"]], "asks": [["11.01", "50"]], "T": now - 1000},

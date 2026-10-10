@@ -15,25 +15,132 @@ def _finite(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def _closed_rows(rows: Iterable[Dict[str, Any]], now_ms: int) -> List[Dict[str, float]]:
+INTERVAL_MS: Dict[str, int] = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+    "6h": 21_600_000,
+    "12h": 43_200_000,
+    "1d": 86_400_000,
+    "1w": 604_800_000,
+}
+
+
+def parse_interval_ms(interval: str | int | None) -> int | None:
+    if interval is None:
+        return None
+    if isinstance(interval, (int, float)):
+        return int(interval)
+    s = str(interval).strip().lower()
+    if s in INTERVAL_MS:
+        return INTERVAL_MS[s]
+    import re
+    m = re.match(r"^(\d+)([smhd])$", s)
+    if m:
+        num, unit = int(m.group(1)), m.group(2)
+        mult = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}[unit]
+        return num * mult
+    return None
+
+
+def _closed_rows(
+    rows: Iterable[Dict[str, Any]],
+    now_ms: int,
+    interval: str | int | None = None,
+    buffer_ms: int = 0
+) -> List[Dict[str, float]]:
     result: List[Dict[str, float]] = []
-    for row in rows:
-        ts = _finite(row.get("time", row.get("timestamp")))
+    parsed_interval = parse_interval_ms(interval)
+    row_list = list(rows)
+
+    if parsed_interval is None and len(row_list) >= 2:
+        valid_ts = sorted([_finite(r.get("time", r.get("timestamp", r.get("openTime")))) for r in row_list if _finite(r.get("time", r.get("timestamp", r.get("openTime")))) is not None])  # type: ignore[arg-type]
+        steps = [valid_ts[i+1] - valid_ts[i] for i in range(len(valid_ts)-1) if valid_ts[i+1] > valid_ts[i]]
+        if steps:
+            parsed_interval = int(min(steps))
+
+    for row in row_list:
+        ts = _finite(row.get("time", row.get("timestamp", row.get("openTime"))))
         values = {key: _finite(row.get(key)) for key in ("open", "high", "low", "close", "volume")}
-        if ts is None or ts >= now_ms or any(v is None for v in values.values()):
+        if ts is None or any(v is None for v in values.values()):
             continue
         low = float(values["low"])  # type: ignore[arg-type]
         high = float(values["high"])  # type: ignore[arg-type]
         if low <= 0 or high < low:
             continue
-        result.append({key: float(value) for key, value in values.items()} | {"time": ts})  # type: ignore[arg-type]
+
+        close_ts = _finite(row.get("closeTime", row.get("close_time", row.get("endTime"))))
+        if close_ts is None:
+            if parsed_interval is not None:
+                close_ts = ts + parsed_interval
+            else:
+                # If neither closeTime nor interval is known, fail closed
+                continue
+
+        # Candle is closed only if close_ts <= now_ms - buffer_ms
+        if close_ts > now_ms - buffer_ms:
+            continue
+
+        result.append({key: float(value) for key, value in values.items()} | {"time": ts, "close_time": close_ts})  # type: ignore[arg-type]
     return sorted(result, key=lambda item: item["time"])
 
 
-def _timeframe_features(rows: Iterable[Dict[str, Any]], now_ms: int) -> Dict[str, Any]:
-    closed = _closed_rows(rows, now_ms)
-    if not closed:
-        return {"candle_count": 0, "valid": False}
+def _intrabar_row(
+    rows: Iterable[Dict[str, Any]],
+    now_ms: int,
+    interval: str | int | None = None,
+    buffer_ms: int = 0
+) -> Dict[str, float] | None:
+    """Finds the current forming / in-progress candle if present."""
+    parsed_interval = parse_interval_ms(interval)
+    row_list = list(rows)
+
+    if parsed_interval is None and len(row_list) >= 2:
+        valid_ts = sorted([_finite(r.get("time", r.get("timestamp", r.get("openTime")))) for r in row_list if _finite(r.get("time", r.get("timestamp", r.get("openTime")))) is not None])  # type: ignore[arg-type]
+        steps = [valid_ts[i+1] - valid_ts[i] for i in range(len(valid_ts)-1) if valid_ts[i+1] > valid_ts[i]]
+        if steps:
+            parsed_interval = int(min(steps))
+
+    intrabars = []
+    for row in row_list:
+        ts = _finite(row.get("time", row.get("timestamp", row.get("openTime"))))
+        values = {key: _finite(row.get(key)) for key in ("open", "high", "low", "close", "volume")}
+        if ts is None or any(v is None for v in values.values()):
+            continue
+        low = float(values["low"])  # type: ignore[arg-type]
+        high = float(values["high"])  # type: ignore[arg-type]
+        if low <= 0 or high < low:
+            continue
+
+        close_ts = _finite(row.get("closeTime", row.get("close_time", row.get("endTime"))))
+        if close_ts is None and parsed_interval is not None:
+            close_ts = ts + parsed_interval
+
+        # Forming candle started (ts <= now_ms) but not yet past buffer close
+        if ts <= now_ms and (close_ts is None or close_ts > now_ms - buffer_ms):
+            intrabars.append({key: float(value) for key, value in values.items()} | {"time": ts, "close_time": close_ts or ts})  # type: ignore[arg-type]
+
+    if not intrabars:
+        return None
+    return sorted(intrabars, key=lambda x: x["time"])[-1]
+
+
+def _timeframe_features(
+    rows: Iterable[Dict[str, Any]],
+    now_ms: int,
+    interval: str | int | None = None,
+    buffer_ms: int = 0,
+    min_history: int = 3
+) -> Dict[str, Any]:
+    closed = _closed_rows(rows, now_ms, interval=interval, buffer_ms=buffer_ms)
+    intrabar = _intrabar_row(rows, now_ms, interval=interval, buffer_ms=buffer_ms)
+    if not closed or len(closed) < min_history:
+        return {"candle_count": len(closed), "valid": False, "intrabar_candle": intrabar}
     closes = [row["close"] for row in closed]
     volumes = [row["volume"] for row in closed]
     last = closed[-1]
@@ -53,6 +160,7 @@ def _timeframe_features(rows: Iterable[Dict[str, Any]], now_ms: int) -> Dict[str
         "distance_from_mean_pct": ema_distance, "upper_wick_ratio": upper_wick / last_range,
         "volume_zscore": vol_z, "last_direction": "UP" if last["close"] >= last["open"] else "DOWN",
         "last_time": int(last["time"]),
+        "intrabar_candle": intrabar,
     }
 
 
@@ -421,9 +529,14 @@ def compute_market_features(
     depth: Dict[str, Any],
     now_ms: int,
     max_age_ms: int = 120_000,
-    max_funding_age_ms: int = 43_200_000
+    max_funding_age_ms: int = 43_200_000,
+    buffer_ms: int = 0,
+    min_history: int = 3
 ) -> Dict[str, Any]:
-    timeframes = {tf: _timeframe_features(rows, now_ms) for tf, rows in candles_by_tf.items()}
+    timeframes = {
+        tf: _timeframe_features(rows, now_ms, interval=tf, buffer_ms=buffer_ms, min_history=min_history)
+        for tf, rows in candles_by_tf.items()
+    }
     funding_rate = _finite(funding.get("lastFundingRate"))
     oi = _finite(open_interest.get("openInterest"))
     funding_ts = _finite(funding.get("updateTime"))
@@ -446,8 +559,8 @@ def compute_market_features(
     friction_pct = 0.10 + (spread if math.isfinite(spread) else 1.0)
 
     # Multi-timeframe closed candle series for Fibonacci and Wave analysis
-    closed_1h = _closed_rows(candles_by_tf.get("1h", []), now_ms)
-    closed_15m = _closed_rows(candles_by_tf.get("15m", []), now_ms)
+    closed_1h = _closed_rows(candles_by_tf.get("1h", []), now_ms, interval="1h", buffer_ms=buffer_ms)
+    closed_15m = _closed_rows(candles_by_tf.get("15m", []), now_ms, interval="15m", buffer_ms=buffer_ms)
     last_close = closed_15m[-1]["close"] if closed_15m else (closed_1h[-1]["close"] if closed_1h else 0.0)
 
     fibonacci = _fibonacci_analysis(closed_1h or closed_15m, last_close)
