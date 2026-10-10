@@ -109,6 +109,36 @@ def init_db():
             cursor.execute("ALTER TABLE order_records ADD COLUMN stop_loss_price REAL")
         if "take_profit_price" not in existing_order_cols:
             cursor.execute("ALTER TABLE order_records ADD COLUMN take_profit_price REAL")
+        if "quote_ts" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN quote_ts INTEGER")
+        if "request_price" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN request_price REAL")
+        if "avg_fill_price" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN avg_fill_price REAL")
+        if "effective_leverage" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN effective_leverage INTEGER")
+        if "entry_fee" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN entry_fee REAL DEFAULT 0.0")
+        if "exit_price" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN exit_price REAL")
+        if "exit_time" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN exit_time TEXT")
+        if "exit_reason" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN exit_reason TEXT")
+        if "exit_fee" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN exit_fee REAL DEFAULT 0.0")
+        if "funding_fee" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN funding_fee REAL DEFAULT 0.0")
+        if "realized_pnl" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN realized_pnl REAL DEFAULT 0.0")
+        if "realized_r" not in existing_order_cols:
+            cursor.execute("ALTER TABLE order_records ADD COLUMN realized_r REAL DEFAULT 0.0")
+
+        # Safe schema evolution for sessions table (equity snapshot)
+        if "initial_equity" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN initial_equity REAL")
+        if "final_equity" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN final_equity REAL")
 
         conn.commit()
 
@@ -237,6 +267,17 @@ def save_session(
         ))
         conn.commit()
 
+def update_session_equity(session_id: str, initial_equity: Optional[float] = None, final_equity: Optional[float] = None):
+    """P1-4: Records initial or final session equity snapshots."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if initial_equity is not None:
+            cursor.execute("UPDATE sessions SET initial_equity = ? WHERE session_id = ?", (initial_equity, session_id))
+        if final_equity is not None:
+            cursor.execute("UPDATE sessions SET final_equity = ? WHERE session_id = ?", (final_equity, session_id))
+        conn.commit()
+
+
 def update_session_status(session_id: str, status: str, filled_count: int, stopped_at: Optional[float] = None):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -345,16 +386,131 @@ def record_order(
     side: str = "SELL",
     position_side: str = "SHORT",
     stop_loss_price: Optional[float] = None,
-    take_profit_price: Optional[float] = None
+    take_profit_price: Optional[float] = None,
+    effective_leverage: Optional[int] = None,
+    quote_ts: Optional[int] = None,
+    request_price: Optional[float] = None,
+    avg_fill_price: Optional[float] = None,
+    entry_fee: float = 0.0
 ):
+    now = datetime.now(timezone.utc).isoformat()
+    eff_lev = effective_leverage if effective_leverage is not None else leverage
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO order_records (
+            user_id, session_id, symbol, side, position_side, quantity, price,
+            notional, leverage, effective_leverage, client_order_id, order_id,
+            status, created_at, stop_loss_price, take_profit_price,
+            quote_ts, request_price, avg_fill_price, entry_fee
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id, session_id, symbol, side, position_side, quantity, price,
+            notional, leverage, eff_lev, client_order_id, order_id,
+            status, now, stop_loss_price, take_profit_price,
+            quote_ts, request_price or price, avg_fill_price or price, entry_fee
+        ))
+        conn.commit()
+
+def record_trade_entry(
+    user_id: int,
+    session_id: str,
+    symbol: str,
+    side: str,
+    position_side: str,
+    quantity: float,
+    price: float,
+    notional: float,
+    effective_leverage: int,
+    client_order_id: str,
+    order_id: Optional[str] = None,
+    status: str = "FILLED",
+    stop_loss_price: Optional[float] = None,
+    take_profit_price: Optional[float] = None,
+    quote_ts: Optional[int] = None,
+    request_price: Optional[float] = None,
+    avg_fill_price: Optional[float] = None,
+    entry_fee: float = 0.0
+):
+    """P1-4: Records complete trade entry in the attribution ledger."""
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-        INSERT INTO order_records (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, created_at, stop_loss_price, take_profit_price)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, session_id, symbol, side, position_side, quantity, price, notional, leverage, client_order_id, order_id, status, now, stop_loss_price, take_profit_price))
+        INSERT INTO order_records (
+            user_id, session_id, symbol, side, position_side, quantity, price,
+            notional, leverage, effective_leverage, client_order_id, order_id,
+            status, created_at, stop_loss_price, take_profit_price, quote_ts,
+            request_price, avg_fill_price, entry_fee
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id, session_id, symbol, side, position_side, quantity, price,
+            notional, effective_leverage, effective_leverage, client_order_id,
+            order_id, status, now, stop_loss_price, take_profit_price, quote_ts,
+            request_price, avg_fill_price or price, entry_fee
+        ))
         conn.commit()
+
+
+def record_trade_exit(
+    client_order_id: str,
+    exit_price: float,
+    exit_reason: str,
+    exit_fee: float = 0.0,
+    funding_fee: float = 0.0,
+    realized_pnl: Optional[float] = None,
+    realized_r: Optional[float] = None
+):
+    """P1-4: Records trade exit fill, reason, fees, and realized R in the ledger."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        UPDATE order_records
+        SET status = 'CLOSED',
+            exit_price = ?,
+            exit_time = ?,
+            exit_reason = ?,
+            exit_fee = ?,
+            funding_fee = ?,
+            realized_pnl = ?,
+            realized_r = ?
+        WHERE client_order_id = ? OR order_id = ?
+        """, (
+            exit_price, now, exit_reason, exit_fee, funding_fee,
+            realized_pnl or 0.0, realized_r or 0.0, client_order_id, client_order_id
+        ))
+        conn.commit()
+
+
+def get_closed_trade_attribution(order_identifier: str) -> Optional[Dict[str, Any]]:
+    """
+    P1-4: Single-query attribution answering:
+    - R berapa? (realized_r)
+    - fee berapa? (total_fee = entry_fee + exit_fee + funding_fee)
+    - kenapa exit? (exit_reason)
+    - leverage efektif berapa? (effective_leverage)
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT symbol, side, position_side, quantity, price as entry_price,
+               avg_fill_price, effective_leverage, leverage, stop_loss_price,
+               take_profit_price, exit_price, exit_reason, exit_time,
+               entry_fee, exit_fee, funding_fee,
+               (COALESCE(entry_fee, 0.0) + COALESCE(exit_fee, 0.0) + COALESCE(funding_fee, 0.0)) as total_fee,
+               realized_pnl, realized_r, client_order_id, order_id, session_id
+        FROM order_records
+        WHERE client_order_id = ? OR order_id = ?
+        ORDER BY id DESC LIMIT 1
+        """, (order_identifier, order_identifier))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return dict(row)
+
 
 def get_user_orders(user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
     with get_db() as conn:

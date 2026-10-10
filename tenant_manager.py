@@ -720,7 +720,12 @@ class TenantSessionManager:
                     side=ord_side,
                     position_side=pos_side,
                     stop_loss_price=sl_price,
-                    take_profit_price=tp_price
+                    take_profit_price=tp_price,
+                    effective_leverage=sizing.get("adaptive_leverage") or orch.current_session.leverage,
+                    quote_ts=ev.get("quote_ts"),
+                    request_price=ev.get("request_price") or ev.get("price", 0.0),
+                    avg_fill_price=ev.get("avg_fill_price") or ev.get("price", 0.0),
+                    entry_fee=ev.get("fee", 0.0)
                 )
 
             humanized_evals.append(h)
