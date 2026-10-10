@@ -55,7 +55,8 @@ class AuditLogger:
         avg_fill_price: Optional[float] = None,
         slippage: Optional[float] = None,
         slippage_pct: Optional[float] = None,
-        fee: Optional[float] = None
+        fee: Optional[float] = None,
+        fill_provenance: Optional[str] = None
     ):
         payload = {
             "symbol": symbol,
@@ -68,6 +69,8 @@ class AuditLogger:
             "order_id": str(order_id) if order_id else None,
             "status": status
         }
+        if fill_provenance is not None:
+            payload["fill_provenance"] = fill_provenance
         if stop_loss_price is not None:
             payload["stop_loss_price"] = stop_loss_price
         if take_profit_price is not None:

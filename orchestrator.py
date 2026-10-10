@@ -466,6 +466,7 @@ class SessionOrchestrator:
                     execution_report["client_order_id"] = client_order_id
                     execution_report["request_price"] = executable_price
                     execution_report["avg_fill_price"] = executable_price
+                    execution_report["fill_provenance"] = "SIMULATED_QUOTE"
                     execution_report["slippage"] = 0.0
                     execution_report["slippage_pct"] = 0.0
                     execution_report["quote_ts"] = quote_ts
@@ -520,11 +521,18 @@ class SessionOrchestrator:
                         order_data = (safe_res.get("order") if isinstance(safe_res.get("order"), dict) else safe_res) or {}
                         order_id_raw = order_data.get("orderId") or safe_res.get("orderId") or client_order_id
                         order_id_str = str(order_id_raw)
-                        order_status = order_data.get("status", "FILLED")
+                        order_status = order_data.get("status") or "SUBMITTED"
                         raw_avg = order_data.get("avgPrice") or order_data.get("price")
-                        actual_avg_price = float(raw_avg) if raw_avg and float(raw_avg) > 0 else executable_price
-                        slippage = actual_avg_price - executable_price
-                        slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
+                        if raw_avg is not None and float(raw_avg) > 0:
+                            actual_avg_price = float(raw_avg)
+                            fill_provenance = "EXCHANGE_REPORTED"
+                            slippage = actual_avg_price - executable_price
+                            slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
+                        else:
+                            actual_avg_price = None
+                            fill_provenance = "PENDING_RECONCILIATION"
+                            slippage = None
+                            slippage_pct = None
 
                         execution_report["executed"] = True
                         execution_report["dry_run"] = False
@@ -532,6 +540,7 @@ class SessionOrchestrator:
                         execution_report["order_id"] = order_id_str
                         execution_report["request_price"] = executable_price
                         execution_report["avg_fill_price"] = actual_avg_price
+                        execution_report["fill_provenance"] = fill_provenance
                         execution_report["slippage"] = slippage
                         execution_report["slippage_pct"] = slippage_pct
                         execution_report["quote_ts"] = quote_ts
@@ -558,7 +567,8 @@ class SessionOrchestrator:
                             request_price=executable_price,
                             avg_fill_price=actual_avg_price,
                             slippage=slippage,
-                            slippage_pct=slippage_pct
+                            slippage_pct=slippage_pct,
+                            fill_provenance=fill_provenance
                         )
                 except BingXAPIError as e:
                     execution_report["executed"] = False
@@ -722,8 +732,30 @@ class SessionOrchestrator:
                         }, session_id=session_id)
                         continue
 
+                    # F-03 & P1-3: Anti-reentry parity in watchlist
+                    if self.current_session and entry.symbol in self.current_session.executed_symbols:
+                        AuditLogger.log_event("WATCHLIST_VETO", {
+                            "symbol": entry.symbol,
+                            "reason": f"ANTI_REENTRY_IN_SESSION:symbol={entry.symbol}"
+                        }, session_id=session_id)
+                        self.watchlist.evict_entry(entry.symbol, reason="ANTI_REENTRY_IN_SESSION", client=self.client, session_id=session_id)
+                        continue
+
+                    # F-03: Spread blowout parity check in watchlist
+                    if w_spread > self.config.max_spread_pct:
+                        AuditLogger.log_event("WATCHLIST_VETO", {
+                            "symbol": entry.symbol,
+                            "reason": f"spread_too_wide_at_execution:{w_spread:.2f}%>{self.config.max_spread_pct}%"
+                        }, session_id=session_id)
+                        continue
+
+                    target_pos_side = entry.direction.upper()
+                    target_order_side = "SELL" if target_pos_side == "SHORT" else "BUY"
+                    executable_price = ask1 if target_pos_side == "LONG" else bid1
+                    quote_ts = w_depth.get("T") or int(time.time() * 1000)
+
                     if trigger_res.trigger_price > 0:
-                        drift = abs(w_curr_price - trigger_res.trigger_price) / trigger_res.trigger_price
+                        drift = abs(executable_price - trigger_res.trigger_price) / trigger_res.trigger_price
                         if drift > 0.005:
                             AuditLogger.log_event("WATCHLIST_VETO", {
                                 "symbol": entry.symbol,
@@ -738,7 +770,7 @@ class SessionOrchestrator:
                         symbol=entry.symbol,
                         margin_usdt=self.current_session.margin_per_pos,
                         target_leverage=entry.leverage,
-                        current_price=w_curr_price,
+                        current_price=executable_price,
                         contract_info=contract_info,
                         max_allowed_leverage=20,
                         direction=entry.direction,
@@ -757,14 +789,14 @@ class SessionOrchestrator:
                             }, session_id=session_id)
                             break
 
-                        target_pos_side = entry.direction.upper()
-                        target_order_side = "SELL" if target_pos_side == "SHORT" else "BUY"
                         prefix = "bx_short" if target_pos_side == "SHORT" else "bx_long"
                         client_order_id = f"{prefix}_wl_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
                         w_exec_report = {
                             "symbol": entry.symbol,
-                            "price": w_curr_price,
+                            "price": executable_price,
+                            "request_price": executable_price,
+                            "quote_ts": quote_ts,
                             "ai_decision": "ENTER_SHORT" if target_pos_side == "SHORT" else "ENTER_LONG",
                             "ai_confidence": entry.conviction_score,
                             "ai_evidence": f"[WATCHLIST_TRIGGER {trigger_res.pattern}] {trigger_res.evidence}",
@@ -794,6 +826,12 @@ class SessionOrchestrator:
                                 w_exec_report["executed"] = False
                                 w_exec_report["dry_run"] = True
                                 w_exec_report["client_order_id"] = client_order_id
+                                w_exec_report["request_price"] = executable_price
+                                w_exec_report["avg_fill_price"] = executable_price
+                                w_exec_report["fill_provenance"] = "SIMULATED_QUOTE"
+                                w_exec_report["slippage"] = 0.0
+                                w_exec_report["slippage_pct"] = 0.0
+                                w_exec_report["status"] = "SIMULATED"
                                 tpsl_info = f" [TP: ${sizing.take_profit_price} (+{sizing.tp_percent}%), SL: ${sizing.stop_loss_price} (-{sizing.sl_percent}%)]" if sizing.take_profit_price else ""
                                 w_exec_report["message"] = (
                                     f"{tag} [WATCHLIST-REVERSAL] Set leverage {sizing.effective_leverage}x | "
@@ -838,12 +876,34 @@ class SessionOrchestrator:
                                         stop_loss_price=sizing.stop_loss_price,
                                         take_profit_price=sizing.take_profit_price
                                     )
-                                    order_id_raw = order_res.get("orderId") or order_res.get("order", {}).get("orderId") or client_order_id
+                                    safe_res = order_res or {}
+                                    order_data = (safe_res.get("order") if isinstance(safe_res.get("order"), dict) else safe_res) or {}
+                                    order_id_raw = order_data.get("orderId") or safe_res.get("orderId") or client_order_id
                                     order_id_str = str(order_id_raw)
+                                    order_status = order_data.get("status") or "SUBMITTED"
+                                    raw_avg = order_data.get("avgPrice") or order_data.get("price")
+                                    if raw_avg is not None and float(raw_avg) > 0:
+                                        actual_avg_price = float(raw_avg)
+                                        fill_provenance = "EXCHANGE_REPORTED"
+                                        slippage = actual_avg_price - executable_price
+                                        slippage_pct = (slippage / executable_price * 100.0) if executable_price > 0 else 0.0
+                                    else:
+                                        actual_avg_price = None
+                                        fill_provenance = "PENDING_RECONCILIATION"
+                                        slippage = None
+                                        slippage_pct = None
+
                                     w_exec_report["executed"] = True
                                     w_exec_report["dry_run"] = False
                                     w_exec_report["client_order_id"] = client_order_id
                                     w_exec_report["order_id"] = order_id_str
+                                    w_exec_report["request_price"] = executable_price
+                                    w_exec_report["avg_fill_price"] = actual_avg_price
+                                    w_exec_report["fill_provenance"] = fill_provenance
+                                    w_exec_report["slippage"] = slippage
+                                    w_exec_report["slippage_pct"] = slippage_pct
+                                    w_exec_report["quote_ts"] = quote_ts
+                                    w_exec_report["status"] = order_status
                                     self.current_session.filled_count += 1
                                     self.current_session.executed_symbols.append(entry.symbol)
                                     self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
@@ -851,19 +911,25 @@ class SessionOrchestrator:
 
                                     AuditLogger.log_order_submission(
                                         symbol=entry.symbol,
-                                    side=target_order_side,
-                                    position_side=target_pos_side,
-                                    order_type="MARKET",
-                                    quantity=sizing.quantity,
-                                    price=w_curr_price,
-                                    client_order_id=client_order_id,
-                                    order_id=order_id_str,
-                                    status="FILLED",
-                                    session_id=self.current_session.session_id,
-                                    stop_loss_price=sizing.stop_loss_price,
-                                    take_profit_price=sizing.take_profit_price
-                                )
-                                cycle_results.append(w_exec_report)
+                                        side=target_order_side,
+                                        position_side=target_pos_side,
+                                        order_type="MARKET",
+                                        quantity=sizing.quantity,
+                                        price=executable_price,
+                                        client_order_id=client_order_id,
+                                        order_id=order_id_str,
+                                        status=order_status,
+                                        session_id=self.current_session.session_id,
+                                        stop_loss_price=sizing.stop_loss_price,
+                                        take_profit_price=sizing.take_profit_price,
+                                        quote_ts=quote_ts,
+                                        request_price=executable_price,
+                                        avg_fill_price=actual_avg_price,
+                                        slippage=slippage,
+                                        slippage_pct=slippage_pct,
+                                        fill_provenance=fill_provenance
+                                    )
+                                    cycle_results.append(w_exec_report)
                             except BingXAPIError as e:
                                 w_exec_report["executed"] = False
                                 w_exec_report["error"] = str(e)
