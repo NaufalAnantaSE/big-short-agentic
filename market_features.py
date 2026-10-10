@@ -15,6 +15,23 @@ def _finite(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _round_price(val: float, precision: int | None = None) -> float:
+    """
+    Safely rounds price values without truncating micro-priced assets (e.g. PEPE, SHIB, MUSEBOOK).
+    Expands decimal precision dynamically when price magnitude is tiny.
+    """
+    if not math.isfinite(val) or val == 0.0:
+        return val
+    if precision is not None:
+        return round(val, precision)
+    mag = abs(val)
+    if mag < 1e-4:
+        return round(val, 10)
+    elif mag < 1e-2:
+        return round(val, 8)
+    return round(val, 6)
+
+
 INTERVAL_MS: Dict[str, int] = {
     "1m": 60_000,
     "3m": 180_000,
@@ -255,17 +272,17 @@ def _fibonacci_analysis(closed_rows: List[Dict[str, float]], current_price: floa
         "valid": True,
         "zone": zone,
         "retracement_ratio": round(retracement_ratio, 4),
-        "swing_high": round(swing_high, 6),
-        "swing_low": round(swing_low, 6),
-        "fib_0_high": round(swing_high, 6),
-        "fib_236": round(fib_236, 6),
-        "fib_382": round(fib_382, 6),
-        "fib_500": round(fib_500, 6),
-        "fib_618": round(fib_618, 6),
-        "fib_786": round(fib_786, 6),
-        "fib_100_low": round(swing_low, 6),
-        "fib_ext_1272": round(fib_ext_1272, 6),
-        "fib_ext_1618": round(fib_ext_1618, 6),
+        "swing_high": _round_price(swing_high),
+        "swing_low": _round_price(swing_low),
+        "fib_0_high": _round_price(swing_high),
+        "fib_236": _round_price(fib_236),
+        "fib_382": _round_price(fib_382),
+        "fib_500": _round_price(fib_500),
+        "fib_618": _round_price(fib_618),
+        "fib_786": _round_price(fib_786),
+        "fib_100_low": _round_price(swing_low),
+        "fib_ext_1272": _round_price(fib_ext_1272),
+        "fib_ext_1618": _round_price(fib_ext_1618),
         "distance_to_high_pct": round(((swing_high - current_price) / current_price) * 100, 2),
         "is_peak_exhaustion": is_peak_exhaustion,
         "is_dump_extended": is_dump_extended,
@@ -484,9 +501,9 @@ def _bollinger_analysis(closed_rows: List[Dict[str, float]], period: int = 20, n
 
     return {
         "valid": True,
-        "upper": round(upper, 6),
-        "mid": round(mid, 6),
-        "lower": round(lower, 6),
+        "upper": _round_price(upper),
+        "mid": _round_price(mid),
+        "lower": _round_price(lower),
         "percent_b": round(percent_b, 4),
         "bandwidth": round(bandwidth, 2),
         "is_overextended_upper": percent_b >= 1.0,
@@ -534,8 +551,8 @@ def _ema_trend_analysis(closed_rows: List[Dict[str, float]], min_bars: int = 3) 
 
     return {
         "valid": True,
-        "ema_20": round(ema_20, 6),
-        "ema_50": round(ema_50, 6),
+        "ema_20": _round_price(ema_20),
+        "ema_50": _round_price(ema_50),
         "trend": trend
     }
 

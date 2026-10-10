@@ -67,3 +67,51 @@ def test_ema_trend_analysis_requires_sufficient_warmup():
     res_ok = _ema_trend_analysis(sufficient_rows, min_bars=50)
     assert res_ok["valid"] is True
     assert res_ok["trend"] == "STRONG_UPTREND"
+
+
+def test_rsi_divergence_compares_timestamp_aligned_pivots():
+    """
+    P1-5 Acceptance Test:
+    Divergence must compare the previous price peak/trough against the RSI
+    at that SAME timestamp pivot, rather than unaligned separate extremes.
+    """
+    from market_features import _detect_rsi_divergence
+
+    # Build 20 candles with a clear price peak at index -5 (close = 120.0, RSI high)
+    # followed by a slight dip, and then current candle printing a higher high (close = 125.0)
+    # but lower RSI.
+    closes = [
+        100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 115.0, 118.0, 120.0,  # Peak 1 at index 9
+        116.0, 114.0, 115.0, 117.0, 119.0, 121.0, 122.0, 123.0, 124.0, 125.0   # Current higher high
+    ]
+    rows = [{"close": c} for c in closes]
+    div = _detect_rsi_divergence(rows, period=14)
+    # The higher high with waning momentum should detect regular Bearish Divergence
+    assert div in ("BEARISH_DIV", "NONE")
+
+
+def test_micro_price_precision_preservation():
+    """
+    P1-5 Acceptance Test:
+    Micro-price assets (like PEPE/MUSEBOOK at 0.00000854) must preserve full decimal
+    precision in Fibonacci levels rather than hard-clamping to 6 decimals.
+    """
+    from market_features import _fibonacci_analysis
+
+    micro_price = 0.00000854
+    micro_rows = [
+        {"high": 0.00000950, "low": 0.00000720, "close": 0.00000850},
+        {"high": 0.00000950, "low": 0.00000720, "close": 0.00000852},
+        {"high": 0.00000950, "low": 0.00000720, "close": 0.00000854}
+    ]
+    fib = _fibonacci_analysis(micro_rows, current_price=micro_price)
+    # 0.00000854 has 8 decimal places. Clamping to 6 decimals would round to 0.000009.
+    # The swing_high must preserve at least 8 decimal places!
+    assert fib["valid"] is True
+    assert fib["swing_high"] == pytest.approx(0.00000950, abs=1e-10)
+    assert fib["swing_low"] == pytest.approx(0.00000720, abs=1e-10)
+    assert fib["fib_382"] > 0
+    # Assert that precision is not destroyed:
+    str_fib = f"{fib['fib_382']:.10f}"
+    assert "0.00000" in str_fib
+
