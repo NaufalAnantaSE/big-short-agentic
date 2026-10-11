@@ -142,6 +142,8 @@ class BingXClient:
         limit: int = 100
     ) -> list:
         """Queries user income history (realized PnL, funding fees, trading fees)."""
+        if self.config.api_key in ("mock", "mock_key", "mock_review", "test", ""):
+            return []
         params: Dict[str, Any] = {"limit": min(limit, 100)}
         if symbol:
             params["symbol"] = symbol

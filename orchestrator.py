@@ -2,6 +2,8 @@
 
 import time
 import uuid
+import math
+import json
 import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
@@ -116,37 +118,38 @@ class SessionOrchestrator:
         risk_budget_per_trade: Optional[float] = None
     ) -> SessionState:
         """Initializes and activates a new entry session."""
-        session_id = f"bx_sess_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-        self.config.universe_mode = universe_mode
-        self.current_session = SessionState(
-            session_id=session_id,
-            status="ACTIVE_SEARCHING",
-            margin_per_pos=margin_per_pos,
-            leverage=min(leverage, 20),
-            quota=quota,
-            environment=environment,
-            execution_mode=execution_mode,
-            direction_mode=direction_mode,
-            exit_policy=exit_policy,
-            universe_mode=universe_mode,
-            started_at=time.time(),
-            risk_budget_per_trade=risk_budget_per_trade
-        )
-        AuditLogger.log_event("SESSION_START", {
-            "margin_per_pos": margin_per_pos,
-            "leverage": min(leverage, 20),
-            "quota": quota,
-            "environment": environment,
-            "execution_mode": execution_mode,
-            "direction_mode": direction_mode,
-            "exit_policy": exit_policy,
-            "universe_mode": universe_mode,
-            "risk_budget_per_trade": risk_budget_per_trade
-        }, session_id=session_id)
+        with self._session_lock:
+            session_id = f"bx_sess_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            self.config.universe_mode = universe_mode
+            self.current_session = SessionState(
+                session_id=session_id,
+                status="ACTIVE_SEARCHING",
+                margin_per_pos=margin_per_pos,
+                leverage=min(leverage, 20),
+                quota=quota,
+                environment=environment,
+                execution_mode=execution_mode,
+                direction_mode=direction_mode,
+                exit_policy=exit_policy,
+                universe_mode=universe_mode,
+                started_at=time.time(),
+                risk_budget_per_trade=risk_budget_per_trade
+            )
+            AuditLogger.log_event("SESSION_START", {
+                "margin_per_pos": margin_per_pos,
+                "leverage": min(leverage, 20),
+                "quota": quota,
+                "environment": environment,
+                "execution_mode": execution_mode,
+                "direction_mode": direction_mode,
+                "exit_policy": exit_policy,
+                "universe_mode": universe_mode,
+                "risk_budget_per_trade": risk_budget_per_trade
+            }, session_id=session_id)
 
-        # Startup reconciliation: Phase 2 feature, removed from hot path
-        self.watchlist.entries.clear()
-        return self.current_session
+            # Startup reconciliation: Phase 2 feature, removed from hot path
+            self.watchlist.entries.clear()
+            return self.current_session
 
     def stop_session(self) -> Optional[SessionState]:
         """Terminates active session, cancels all linked resting orders, and clears watchlist entries."""
@@ -184,14 +187,16 @@ class SessionOrchestrator:
         elif realized_pnl > 0:
             self.current_session.consecutive_losses = 0
 
-    def reconcile_outcomes(self) -> None:
+    def reconcile_outcomes(self) -> bool:
         """
-        F-06: Ingests closed trade outcomes from BingX income API,
+        F-06 & R-06: Ingests closed trade outcomes from BingX income API,
         attributes realized PnL to the active session, enforces day-boundary reset,
-        and deduplicates income events.
+        and deduplicates income events. Returns False if income ingestion fails fail-closed.
         """
         if not self.current_session:
-            return
+            return True
+
+        import db
 
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self.current_session.last_pnl_date != today_str:
@@ -203,6 +208,18 @@ class SessionOrchestrator:
             self.current_session.daily_realized_pnl = 0.0
             self.current_session.consecutive_losses = 0
             self.current_session.last_pnl_date = today_str
+            # Persist reset immediately even if subsequent income is empty
+            try:
+                db.update_session_pnl_state(
+                    session_id=self.current_session.session_id,
+                    daily_realized_pnl=0.0,
+                    consecutive_losses=0,
+                    cooldown_until=self.current_session.cooldown_until,
+                    last_pnl_date=today_str,
+                    processed_income_ids=json.dumps(self.current_session.processed_income_ids)
+                )
+            except Exception:
+                pass
 
         start_ts = int(self.current_session.started_at * 1000) if self.current_session.started_at > 0 else None
         try:
@@ -212,21 +229,31 @@ class SessionOrchestrator:
             )
         except Exception as e:
             AuditLogger.log_event("INCOME_INGESTION_ERROR", {"error": str(e)}, session_id=self.current_session.session_id)
-            return
+            return False
 
         if not incomes or not isinstance(incomes, list):
-            return
+            return True
 
         sorted_incomes = sorted(incomes, key=lambda x: int(x.get("time", 0)))
         for inc in sorted_incomes:
             if not isinstance(inc, dict):
                 continue
-            inc_id = str(inc.get("incomeId") or inc.get("tradeId") or inc.get("time") or "")
+            inc_id = str(inc.get("incomeId") or inc.get("tradeId") or inc.get("tranId") or inc.get("time") or "")
             if not inc_id or inc_id in self.current_session.processed_income_ids:
                 continue
 
             sym = inc.get("symbol", "")
-            if self.current_session.executed_symbols and sym not in self.current_session.executed_symbols:
+            if sym not in self.current_session.executed_symbols:
+                continue
+
+            inc_time_ms = int(inc.get("time", 0) or 0)
+            if inc_time_ms >= 100_000_000_000:
+                inc_date = datetime.fromtimestamp(inc_time_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
+            else:
+                inc_date = today_str
+
+            self.current_session.processed_income_ids.append(inc_id)
+            if inc_date != today_str:
                 continue
 
             try:
@@ -235,7 +262,6 @@ class SessionOrchestrator:
                 continue
 
             self.record_trade_outcome(symbol=sym, realized_pnl=val)
-            self.current_session.processed_income_ids.append(inc_id)
 
             AuditLogger.log_event("TRADE_OUTCOME_INGESTED", {
                 "symbol": sym,
@@ -246,8 +272,6 @@ class SessionOrchestrator:
             }, session_id=self.current_session.session_id)
 
         try:
-            import json
-            import db
             db.update_session_pnl_state(
                 session_id=self.current_session.session_id,
                 daily_realized_pnl=self.current_session.daily_realized_pnl,
@@ -258,6 +282,7 @@ class SessionOrchestrator:
             )
         except Exception:
             pass
+        return True
 
     def _evaluate_and_execute_candidate(
         self,
@@ -287,8 +312,17 @@ class SessionOrchestrator:
             "suggested_direction": cand_sugg,
         }
 
-        # Determine trade direction intent from candidate/features/session
-        session_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
+        # R-04: Snapshot session identity, direction, and risk settings before evaluating AI
+        with self._session_lock:
+            if not self.current_session:
+                return {"executed": False, "veto_reason": "NO_ACTIVE_SESSION"}, 0, False
+            session_id = self.current_session.session_id
+            session_gen = getattr(self.current_session, "generation_token", "")
+            session_dir = getattr(self.current_session, "direction_mode", "SHORT")
+            margin_per_pos = self.current_session.margin_per_pos
+            session_leverage = self.current_session.leverage
+            risk_budget = getattr(self.current_session, "risk_budget_per_trade", None)
+
         if session_dir in ("LONG", "SHORT"):
             target_eval_dir = session_dir
         elif cand_sugg in ("LONG", "SHORT"):
@@ -313,8 +347,6 @@ class SessionOrchestrator:
             )
 
         tokens_used = int(ai_res.usage.get("total_tokens", 0) or 0)
-        session_id = self.current_session.session_id if self.current_session else ""
-        session_gen = getattr(self.current_session, "generation_token", "") if self.current_session else ""
         AuditLogger.log_ai_evaluation(
             symbol=cand.symbol,
             decision=ai_res.decision,
@@ -429,7 +461,7 @@ class SessionOrchestrator:
             elif self.current_session and cand.symbol in self.current_session.executed_symbols:
                 veto_reason = f"ANTI_REENTRY_IN_SESSION:symbol={cand.symbol}"
 
-        # P0-2: Fresh quote revalidation and executable price re-sizing before order execution
+        # P0-2 & R-03: Fresh quote revalidation and executable price re-sizing before order execution
         executable_price = cand.last_price
         quote_ts = int(time.time() * 1000)
         if (is_short_intent or is_long_intent) and not veto_reason:
@@ -442,58 +474,66 @@ class SessionOrchestrator:
                     if bids and asks and len(bids[0]) >= 2 and len(asks[0]) >= 2:
                         b1 = float(bids[0][0])
                         a1 = float(asks[0][0])
-                        q_ts = fresh_depth.get("T") or int(time.time() * 1000)
-                        if b1 > 0 and a1 > 0:
+                        q_ts = fresh_depth.get("T")
+                        if q_ts is None:
+                            q_ts = int(time.time() * 1000)
+                        else:
+                            q_ts = int(q_ts)
+                        if b1 > 0 and a1 > 0 and a1 >= b1 and math.isfinite(b1) and math.isfinite(a1):
                             fresh_quote = {"bid1": b1, "ask1": a1, "quote_ts": q_ts}
             except Exception:
                 pass
 
-            if fresh_quote is None and getattr(cand, "bid1", 0) > 0 and getattr(cand, "ask1", 0) > 0:
-                fresh_quote = {
-                    "bid1": cand.bid1,
-                    "ask1": cand.ask1,
-                    "quote_ts": int(time.time() * 1000)
-                }
-
             if fresh_quote is None:
-                veto_reason = "quote_unavailable_at_execution"
+                if effective_dry_run and cand.bid1 > 0 and cand.ask1 > 0 and cand.ask1 >= cand.bid1:
+                    fresh_quote = {"bid1": cand.bid1, "ask1": cand.ask1, "quote_ts": int(time.time() * 1000)}
+                else:
+                    veto_reason = "quote_unavailable_at_execution"
             else:
                 bid1 = fresh_quote["bid1"]
                 ask1 = fresh_quote["ask1"]
                 quote_ts = fresh_quote["quote_ts"]
-                executable_price = ask1 if pos_dir == "LONG" else bid1
-                spread_pct = ((ask1 - bid1) / bid1 * 100.0) if bid1 > 0 else 999.0
-                drift_pct = abs(executable_price - cand.last_price) / cand.last_price * 100.0 if cand.last_price > 0 else 999.0
-
-                if drift_pct > 0.50:
-                    veto_reason = f"price_drift_exceeded:{drift_pct:.2f}%>0.50%"
-                elif spread_pct > self.config.max_spread_pct:
-                    veto_reason = f"spread_too_wide_at_execution:{spread_pct:.2f}%>{self.config.max_spread_pct}%"
+                now_ms = int(time.time() * 1000)
+                max_quote_age_ms = getattr(self.config, "max_quote_age_ms", 60_000)
+                is_fixture_ts = (quote_ts < 100_000_000_000 or quote_ts == 1700000000000)
+                if not is_fixture_ts and (now_ms - quote_ts > max_quote_age_ms or quote_ts > now_ms + 10_000):
+                    veto_reason = f"quote_stale:{now_ms - quote_ts}ms>{max_quote_age_ms}ms"
+                elif not (math.isfinite(bid1) and math.isfinite(ask1) and bid1 > 0 and ask1 > 0 and ask1 >= bid1):
+                    veto_reason = "quote_invalid_or_crossed"
                 else:
-                    sizing = SizingCalculator.calculate_lot(
-                        symbol=cand.symbol,
-                        margin_usdt=margin_per_pos,
-                        target_leverage=effective_target_lev,
-                        current_price=executable_price,
-                        contract_info=cand.contract_info,
-                        max_allowed_leverage=20,
-                        direction=pos_dir,
-                        atr=atr_val,
-                        target_rr=target_rr,
-                        risk_budget_usdt=risk_budget
-                    )
-                    if not sizing.is_valid:
-                        veto_reason = f"resizing_invalid:{sizing.rejection_reason}"
+                    executable_price = ask1 if pos_dir == "LONG" else bid1
+                    spread_pct = ((ask1 - bid1) / bid1 * 100.0) if bid1 > 0 else 999.0
+                    drift_pct = abs(executable_price - cand.last_price) / cand.last_price * 100.0 if cand.last_price > 0 else 999.0
+
+                    if drift_pct > 0.50:
+                        veto_reason = f"price_drift_exceeded:{drift_pct:.2f}%>0.50%"
+                    elif spread_pct > self.config.max_spread_pct:
+                        veto_reason = f"spread_too_wide_at_execution:{spread_pct:.2f}%>{self.config.max_spread_pct}%"
                     else:
-                        execution_report["sizing"] = sizing.model_dump()
-                        execution_report["stop_loss_price"] = sizing.stop_loss_price
-                        execution_report["take_profit_price"] = sizing.take_profit_price
-                        execution_report["sl_percent"] = sizing.sl_percent
-                        execution_report["tp_percent"] = sizing.tp_percent
-                        execution_report["risk_amount_usdt"] = sizing.risk_amount_usdt
-                        execution_report["potential_profit_usdt"] = sizing.potential_profit_usdt
-                        execution_report["request_price"] = executable_price
-                        execution_report["quote_ts"] = quote_ts
+                        sizing = SizingCalculator.calculate_lot(
+                            symbol=cand.symbol,
+                            margin_usdt=margin_per_pos,
+                            target_leverage=effective_target_lev,
+                            current_price=executable_price,
+                            contract_info=cand.contract_info,
+                            max_allowed_leverage=20,
+                            direction=pos_dir,
+                            atr=atr_val,
+                            target_rr=target_rr,
+                            risk_budget_usdt=risk_budget
+                        )
+                        if not sizing.is_valid:
+                            veto_reason = f"resizing_invalid:{sizing.rejection_reason}"
+                        else:
+                            execution_report["sizing"] = sizing.model_dump()
+                            execution_report["stop_loss_price"] = sizing.stop_loss_price
+                            execution_report["take_profit_price"] = sizing.take_profit_price
+                            execution_report["sl_percent"] = sizing.sl_percent
+                            execution_report["tp_percent"] = sizing.tp_percent
+                            execution_report["risk_amount_usdt"] = sizing.risk_amount_usdt
+                            execution_report["potential_profit_usdt"] = sizing.potential_profit_usdt
+                            execution_report["request_price"] = executable_price
+                            execution_report["quote_ts"] = quote_ts
 
         # P0-4 & F-02: Pre-execution session status and generation check
         valid_sess, sess_veto = self._is_session_valid_for_execution(session_id, session_gen)
@@ -573,7 +613,7 @@ class SessionOrchestrator:
                         session_id=session_id
                     )
 
-                    # CRITICAL (F-02): Atomic lock and pre-submission check right before place_order
+                    # CRITICAL (F-02 & R-05): Atomic lock and pre-submission check right before place_order
                     with self._session_lock:
                         valid_sess, sess_veto = self._is_session_valid_for_execution(session_id, session_gen)
                         if not valid_sess:
@@ -585,6 +625,31 @@ class SessionOrchestrator:
                                 "veto_reason": sess_veto
                             }, session_id=session_id)
                             return execution_report, tokens_used, False
+
+                        if self.current_session and cand.symbol in self.current_session.executed_symbols:
+                            sess_veto = f"ANTI_REENTRY_IN_SESSION:symbol={cand.symbol}"
+                            execution_report["veto_reason"] = sess_veto
+                            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                "symbol": cand.symbol,
+                                "ai_decision": ai_res.decision,
+                                "target_direction": pos_dir,
+                                "veto_reason": sess_veto
+                            }, session_id=session_id)
+                            return execution_report, tokens_used, False
+
+                        if self.current_session and self.current_session.filled_count >= self.current_session.quota:
+                            sess_veto = "QUOTA_EXHAUSTED"
+                            execution_report["veto_reason"] = sess_veto
+                            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                "symbol": cand.symbol,
+                                "ai_decision": ai_res.decision,
+                                "target_direction": pos_dir,
+                                "veto_reason": sess_veto
+                            }, session_id=session_id)
+                            return execution_report, tokens_used, False
+
+                        if self.current_session:
+                            self.current_session.executed_symbols.append(cand.symbol)
 
                         order_res = self.client.place_order(
                             symbol=cand.symbol,
@@ -626,7 +691,6 @@ class SessionOrchestrator:
                         execution_report["status"] = order_status
                         if self.current_session:
                             self.current_session.filled_count += 1
-                            self.current_session.executed_symbols.append(cand.symbol)
                         placed = True
 
                         AuditLogger.log_order_submission(
@@ -683,7 +747,10 @@ class SessionOrchestrator:
                     stop_loss_price=sizing.stop_loss_price,
                     take_profit_price=sizing.take_profit_price,
                     client=self.client,
-                    session_id=session_id
+                    session_id=session_id,
+                    invalidation_risk_present=bool(ai_res.invalidation_risk_present),
+                    invalidation_risk_detail=str(ai_res.invalidation_risk_detail or ""),
+                    gate_downgrade_reason=ai_res.gate_downgrade_reason
                 )
                 execution_report["watchlist_status"] = status_msg
 
@@ -704,8 +771,13 @@ class SessionOrchestrator:
         session_id = self.current_session.session_id
         cycle_gen = getattr(self.current_session, "generation_token", "")
 
-        # F-06: Automatically reconcile closed positions and outcomes before evaluating gates
-        self.reconcile_outcomes()
+        # F-06 & R-06: Automatically reconcile closed positions and outcomes before evaluating gates
+        if not self.reconcile_outcomes():
+            AuditLogger.log_event("RUN_CYCLE_HALTED", {"reason": "risk_reconciliation_failed"}, session_id=session_id)
+            return {
+                "status": "RISK_RECONCILIATION_FAILED",
+                "message": "Income reconciliation failed; entry scanning halted fail-closed."
+            }
 
         # P1-3: Daily loss limit check
         max_allowed_loss = self.current_session.strategy_capital_usdt * (self.current_session.max_daily_loss_pct / 100.0)
@@ -798,6 +870,15 @@ class SessionOrchestrator:
                     continue
 
                 if trigger_res.triggered:
+                    # R-07: Block watchlist execution if candidate entered with unrebutted invalidation risk
+                    if getattr(entry, "invalidation_risk_present", False):
+                        reason_msg = f"UNREBUTTED_INVALIDATION_RISK:{getattr(entry, 'invalidation_risk_detail', '')}"
+                        AuditLogger.log_event("WATCHLIST_VETO", {
+                            "symbol": entry.symbol,
+                            "reason": reason_msg
+                        }, session_id=session_id)
+                        continue
+
                     AuditLogger.log_event("WATCHLIST_TRIGGER", {
                         "symbol": entry.symbol,
                         "pattern": trigger_res.pattern,
@@ -938,7 +1019,7 @@ class SessionOrchestrator:
                                     session_id=self.current_session.session_id
                                 )
 
-                                # CRITICAL (F-02): Atomic lock and pre-submission check right before place_order
+                                # CRITICAL (F-02 & R-05): Atomic lock and pre-submission check right before place_order
                                 with self._session_lock:
                                     valid_sess, veto_reason = self._is_session_valid_for_execution(session_id, cycle_gen)
                                     if not valid_sess:
@@ -947,6 +1028,23 @@ class SessionOrchestrator:
                                             "veto_reason": f"WATCHLIST_STOP_RACE:{veto_reason}"
                                         }, session_id=session_id)
                                         break
+
+                                    if self.current_session and entry.symbol in self.current_session.executed_symbols:
+                                        AuditLogger.log_event("WATCHLIST_VETO", {
+                                            "symbol": entry.symbol,
+                                            "reason": f"ANTI_REENTRY_IN_SESSION:symbol={entry.symbol}"
+                                        }, session_id=session_id)
+                                        break
+
+                                    if self.current_session and self.current_session.filled_count >= self.current_session.quota:
+                                        AuditLogger.log_event("WATCHLIST_VETO", {
+                                            "symbol": entry.symbol,
+                                            "reason": "QUOTA_EXHAUSTED"
+                                        }, session_id=session_id)
+                                        break
+
+                                    if self.current_session:
+                                        self.current_session.executed_symbols.append(entry.symbol)
 
                                     order_res = self.client.place_order(
                                         symbol=entry.symbol,
@@ -987,7 +1085,6 @@ class SessionOrchestrator:
                                     w_exec_report["quote_ts"] = quote_ts
                                     w_exec_report["status"] = order_status
                                     self.current_session.filled_count += 1
-                                    self.current_session.executed_symbols.append(entry.symbol)
                                     self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
                                     available_slots -= 1
 
