@@ -613,7 +613,7 @@ class SizingCalculator:
 
         required_margin = actual_notional / Decimal(str(effective_leverage))
         if max_margin_usdt is not None and required_margin > Decimal(str(max_margin_usdt)):
-            highest_safe_lev = min(pair_max_leverage, max_allowed_leverage, max_safe_lev)
+            highest_safe_lev = min(target_leverage, pair_max_leverage, max_allowed_leverage, max_safe_lev)
             lowest_possible_margin = actual_notional / Decimal(str(highest_safe_lev))
             if lowest_possible_margin <= Decimal(str(max_margin_usdt)):
                 effective_leverage = highest_safe_lev
