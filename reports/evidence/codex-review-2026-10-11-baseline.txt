@@ -1,0 +1,105 @@
+............................................................FF.......... [ 24%]
+.........................................................FF............. [ 48%]
+........................................................................ [ 72%]
+........................................................................ [ 96%]
+.........                                                                [100%]
+=================================== FAILURES ===================================
+______ test_app_config_and_tenant_manager_default_to_2_dollar_fixed_risk _______
+tests/test_f04_fixed_risk_tenant_defaults.py:33: in test_app_config_and_tenant_manager_default_to_2_dollar_fixed_risk
+    res = tm.start_session(user_id=user_id, margin_per_pos=5.0, leverage=20, quota=2)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tenant_manager.py:478: in start_session
+    orch = self.get_orchestrator(user_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tenant_manager.py:264: in get_orchestrator
+    cfg = self._build_tenant_config(user_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tenant_manager.py:236: in _build_tenant_config
+    raise ValueError("Kunci API BingX belum dimasukkan. Silakan simpan API Key & Secret Key Anda terlebih dahulu.")
+E   ValueError: Kunci API BingX belum dimasukkan. Silakan simpan API Key & Secret Key Anda terlebih dahulu.
+_________ test_tenant_start_session_persists_and_forwards_risk_budget __________
+tests/test_f04_fixed_risk_tenant_defaults.py:52: in test_tenant_start_session_persists_and_forwards_risk_budget
+    res = tm.start_session(
+tenant_manager.py:478: in start_session
+    orch = self.get_orchestrator(user_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tenant_manager.py:264: in get_orchestrator
+    cfg = self._build_tenant_config(user_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tenant_manager.py:236: in _build_tenant_config
+    raise ValueError("Kunci API BingX belum dimasukkan. Silakan simpan API Key & Secret Key Anda terlebih dahulu.")
+E   ValueError: Kunci API BingX belum dimasukkan. Silakan simpan API Key & Secret Key Anda terlebih dahulu.
+__ test_watchlist_empty_depth_does_not_produce_zero_spread_and_skips_trigger ___
+tests/test_p0_5_watchlist_parity.py:73: in test_watchlist_empty_depth_does_not_produce_zero_spread_and_skips_trigger
+    res = orch.run_cycle(dry_run=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator.py:1137: in run_cycle
+    candidates = self.scanner.scan_universe(
+scanner.py:98: in scan_universe
+    tickers = self.client.get_tickers()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+client.py:188: in get_tickers
+    res = self._request("GET", "/openApi/swap/v2/quote/ticker", signed=False)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:30: in safe_mock_request
+    return orig_request(self, method, url, params=params, signed=signed)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+client.py:87: in _request
+    resp = self.client.request(method, final_url, params=send_params, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:825: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:914: in send
+    response = self._send_handling_auth(
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:942: in _send_handling_auth
+    response = self._send_handling_redirects(
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:979: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:1014: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+review_isolation.py:5: in blocked_network
+    raise RuntimeError("REVIEW: outbound network blocked")
+E   RuntimeError: REVIEW: outbound network blocked
+__________ test_watchlist_execution_preserves_playbook_and_target_rr ___________
+tests/test_p0_5_watchlist_parity.py:136: in test_watchlist_execution_preserves_playbook_and_target_rr
+    res = orch.run_cycle(dry_run=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator.py:1137: in run_cycle
+    candidates = self.scanner.scan_universe(
+scanner.py:98: in scan_universe
+    tickers = self.client.get_tickers()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+client.py:188: in get_tickers
+    res = self._request("GET", "/openApi/swap/v2/quote/ticker", signed=False)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:30: in safe_mock_request
+    return orig_request(self, method, url, params=params, signed=signed)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+client.py:87: in _request
+    resp = self.client.request(method, final_url, params=send_params, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:825: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:914: in send
+    response = self._send_handling_auth(
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:942: in _send_handling_auth
+    response = self._send_handling_redirects(
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:979: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/naufal-ananta/bot/bingx-short-agent/.venv/lib/python3.12/site-packages/httpx/_client.py:1014: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+review_isolation.py:5: in blocked_network
+    raise RuntimeError("REVIEW: outbound network blocked")
+E   RuntimeError: REVIEW: outbound network blocked
+=========================== short test summary info ============================
+FAILED tests/test_f04_fixed_risk_tenant_defaults.py::test_app_config_and_tenant_manager_default_to_2_dollar_fixed_risk
+FAILED tests/test_f04_fixed_risk_tenant_defaults.py::test_tenant_start_session_persists_and_forwards_risk_budget
+FAILED tests/test_p0_5_watchlist_parity.py::test_watchlist_empty_depth_does_not_produce_zero_spread_and_skips_trigger
+FAILED tests/test_p0_5_watchlist_parity.py::test_watchlist_execution_preserves_playbook_and_target_rr
+4 failed, 293 passed, 5 warnings in 18.61s

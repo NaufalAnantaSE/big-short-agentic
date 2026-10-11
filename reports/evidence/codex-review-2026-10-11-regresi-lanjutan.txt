@@ -1,0 +1,75 @@
+..FFFFFFFF                                                               [100%]
+=================================== FAILURES ===================================
+_______ test_real_database_restart_preserves_ownership_and_ingests_exit ________
+test_codex_followup_review.py:65: in test_real_database_restart_preserves_ownership_and_ingests_exit
+    assert fresh.current_session.daily_realized_pnl == -4, (
+E   AssertionError: Owned exit ignored: symbols=[], pnl=0.0
+E   assert 0.0 == -4
+E    +  where 0.0 = SessionState(session_id='bx_sess_1791698967_d57c6b', status='ACTIVE_SEARCHING', generation_token='cc407808e33e4a69bbed...onsecutive_losses=0, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-11', processed_income_ids=[]).daily_realized_pnl
+E    +    where SessionState(session_id='bx_sess_1791698967_d57c6b', status='ACTIVE_SEARCHING', generation_token='cc407808e33e4a69bbed...onsecutive_losses=0, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-11', processed_income_ids=[]) = <orchestrator.SessionOrchestrator object at 0x71f291e80da0>.current_session
+________ test_unknown_invalidation_answer_remains_blocked_in_watchlist _________
+test_codex_followup_review.py:79: in test_unknown_invalidation_answer_remains_blocked_in_watchlist
+    assert orch.client.place_order.call_count == 0, "UNKNOWN became bool(None)=False and watchlist submitted"
+E   AssertionError: UNKNOWN became bool(None)=False and watchlist submitted
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286643933376'>.call_count
+E    +    where <Mock id='125286643933376'> = <client.BingXClient object at 0x71f291e83800>.place_order
+E    +      where <client.BingXClient object at 0x71f291e83800> = <orchestrator.SessionOrchestrator object at 0x71f291e833e0>.client
+___________ test_existing_watchlist_entry_receives_new_invalidation ____________
+test_codex_followup_review.py:94: in test_existing_watchlist_entry_receives_new_invalidation
+    assert orch.client.place_order.call_count == 0, "Existing entry discarded new invalidation fields"
+E   AssertionError: Existing entry discarded new invalidation fields
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286643938656'>.call_count
+E    +    where <Mock id='125286643938656'> = <client.BingXClient object at 0x71f291e82900>.place_order
+E    +      where <client.BingXClient object at 0x71f291e82900> = <orchestrator.SessionOrchestrator object at 0x71f291e82870>.client
+___ test_no_fixture_timestamp_exemption_in_exchange_execution[1700000000000] ___
+test_codex_followup_review.py:101: in test_no_fixture_timestamp_exemption_in_exchange_execution
+    assert orch.client.place_order.call_count == 0, f"Production accepted exempt fixture timestamp {timestamp}"
+E   AssertionError: Production accepted exempt fixture timestamp 1700000000000
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286642109040'>.call_count
+E    +    where <Mock id='125286642109040'> = <client.BingXClient object at 0x71f291cc4140>.place_order
+E    +      where <client.BingXClient object at 0x71f291cc4140> = <orchestrator.SessionOrchestrator object at 0x71f291cc4110>.client
+_________ test_no_fixture_timestamp_exemption_in_exchange_execution[1] _________
+test_codex_followup_review.py:101: in test_no_fixture_timestamp_exemption_in_exchange_execution
+    assert orch.client.place_order.call_count == 0, f"Production accepted exempt fixture timestamp {timestamp}"
+E   AssertionError: Production accepted exempt fixture timestamp 1
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286642113504'>.call_count
+E    +    where <Mock id='125286642113504'> = <client.BingXClient object at 0x71f291cc7c20>.place_order
+E    +      where <client.BingXClient object at 0x71f291cc7c20> = <orchestrator.SessionOrchestrator object at 0x71f291cc6f90>.client
+__________________ test_watchlist_rejects_one_hour_old_quote ___________________
+test_codex_followup_review.py:110: in test_watchlist_rejects_one_hour_old_quote
+    assert orch.client.place_order.call_count == 0, "Watchlist submitted using one-hour-old depth"
+E   AssertionError: Watchlist submitted using one-hour-old depth
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286642119216'>.call_count
+E    +    where <Mock id='125286642119216'> = <client.BingXClient object at 0x71f291cc6690>.place_order
+E    +      where <client.BingXClient object at 0x71f291cc6690> = <orchestrator.SessionOrchestrator object at 0x71f291cc6600>.client
+__________ test_quote_expiring_during_leverage_request_blocks_submit ___________
+test_codex_followup_review.py:121: in test_quote_expiring_during_leverage_request_blocks_submit
+    assert orch.client.place_order.call_count == 0, "Quote age was checked before, but not after, delayed preflight"
+E   AssertionError: Quote age was checked before, but not after, delayed preflight
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286642452672'>.call_count
+E    +    where <Mock id='125286642452672'> = <client.BingXClient object at 0x71f291cc7ec0>.place_order
+E    +      where <client.BingXClient object at 0x71f291cc7ec0> = <orchestrator.SessionOrchestrator object at 0x71f291cc7e30>.client
+________ test_replacing_session_during_triage_cancels_entire_old_cycle _________
+test_codex_followup_review.py:139: in test_replacing_session_during_triage_cancels_entire_old_cycle
+    assert orch.client.place_order.call_count == 0, "New per-candidate snapshot adopted previous cycle's candidate"
+E   AssertionError: New per-candidate snapshot adopted previous cycle's candidate
+E   assert 1 == 0
+E    +  where 1 = <Mock id='125286642457184'>.call_count
+E    +    where <Mock id='125286642457184'> = <client.BingXClient object at 0x71f291d19010>.place_order
+E    +      where <client.BingXClient object at 0x71f291d19010> = <orchestrator.SessionOrchestrator object at 0x71f291d1b170>.client
+=========================== short test summary info ============================
+FAILED test_codex_followup_review.py::test_real_database_restart_preserves_ownership_and_ingests_exit
+FAILED test_codex_followup_review.py::test_unknown_invalidation_answer_remains_blocked_in_watchlist
+FAILED test_codex_followup_review.py::test_existing_watchlist_entry_receives_new_invalidation
+FAILED test_codex_followup_review.py::test_no_fixture_timestamp_exemption_in_exchange_execution[1700000000000]
+FAILED test_codex_followup_review.py::test_no_fixture_timestamp_exemption_in_exchange_execution[1]
+FAILED test_codex_followup_review.py::test_watchlist_rejects_one_hour_old_quote
+FAILED test_codex_followup_review.py::test_quote_expiring_during_leverage_request_blocks_submit
+FAILED test_codex_followup_review.py::test_replacing_session_during_triage_cancels_entire_old_cycle
+8 failed, 2 passed in 0.61s
