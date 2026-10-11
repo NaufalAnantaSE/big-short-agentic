@@ -750,7 +750,7 @@ class SessionOrchestrator:
                     take_profit_price=sizing.take_profit_price,
                     client=self.client,
                     session_id=session_id,
-                    invalidation_risk_present=bool(ai_res.invalidation_risk_present),
+                    invalidation_risk_present=ai_res.invalidation_risk_present,
                     invalidation_risk_detail=str(ai_res.invalidation_risk_detail or ""),
                     gate_downgrade_reason=ai_res.gate_downgrade_reason
                 )
@@ -872,9 +872,11 @@ class SessionOrchestrator:
                     continue
 
                 if trigger_res.triggered:
-                    # R-07: Block watchlist execution if candidate entered with unrebutted invalidation risk
-                    if getattr(entry, "invalidation_risk_present", False):
-                        reason_msg = f"UNREBUTTED_INVALIDATION_RISK:{getattr(entry, 'invalidation_risk_detail', '')}"
+                    # R-07 & Followup: Block watchlist execution if candidate entered with unrebutted or unknown invalidation risk
+                    risk_flag = getattr(entry, "invalidation_risk_present", False)
+                    gate_down = getattr(entry, "gate_downgrade_reason", None)
+                    if risk_flag is True or risk_flag is None or gate_down in ("invalidating_risk_answer_missing", "invalidation_risk_present", "invalidation_risk_unknown"):
+                        reason_msg = f"UNREBUTTED_INVALIDATION_RISK:{getattr(entry, 'invalidation_risk_detail', '') or gate_down or ''}"
                         AuditLogger.log_event("WATCHLIST_VETO", {
                             "symbol": entry.symbol,
                             "reason": reason_msg

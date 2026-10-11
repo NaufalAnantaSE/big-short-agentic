@@ -30,7 +30,7 @@ class WatchlistEntry(BaseModel):
     leverage: int = 20
     stop_loss_price: Optional[float] = None
     take_profit_price: Optional[float] = None
-    invalidation_risk_present: bool = False
+    invalidation_risk_present: Optional[bool] = False
     invalidation_risk_detail: str = ""
     gate_downgrade_reason: Optional[str] = None
 
@@ -82,7 +82,7 @@ class WatchlistManager:
         take_profit_price: Optional[float] = None,
         client: Optional[BingXClient] = None,
         session_id: Optional[str] = None,
-        invalidation_risk_present: bool = False,
+        invalidation_risk_present: Optional[bool] = False,
         invalidation_risk_detail: str = "",
         gate_downgrade_reason: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
@@ -101,6 +101,9 @@ class WatchlistManager:
             existing.last_checked_at = now
             if atr > 0:
                 existing.atr = atr
+            existing.invalidation_risk_present = invalidation_risk_present
+            existing.invalidation_risk_detail = invalidation_risk_detail
+            existing.gate_downgrade_reason = gate_downgrade_reason
             return True, "UPDATED_EXISTING"
 
         # Check capacity
