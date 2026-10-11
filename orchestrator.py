@@ -501,8 +501,7 @@ class SessionOrchestrator:
                 quote_ts = fresh_quote["quote_ts"]
                 now_ms = int(time.time() * 1000)
                 max_quote_age_ms = getattr(self.config, "max_quote_age_ms", 60_000)
-                is_fixture_ts = (quote_ts < 100_000_000_000 or quote_ts == 1700000000000)
-                if not is_fixture_ts and (now_ms - quote_ts > max_quote_age_ms or quote_ts > now_ms + 10_000):
+                if now_ms - quote_ts > max_quote_age_ms or quote_ts > now_ms + 10_000 or quote_ts <= 100_000_000_000:
                     veto_reason = f"quote_stale:{now_ms - quote_ts}ms>{max_quote_age_ms}ms"
                 elif not (math.isfinite(bid1) and math.isfinite(ask1) and bid1 > 0 and ask1 > 0 and ask1 >= bid1):
                     veto_reason = "quote_invalid_or_crossed"
@@ -645,6 +644,19 @@ class SessionOrchestrator:
 
                         if self.current_session and self.current_session.filled_count >= self.current_session.quota:
                             sess_veto = "QUOTA_EXHAUSTED"
+                            execution_report["veto_reason"] = sess_veto
+                            AuditLogger.log_event("TRADE_EXECUTION_VETO", {
+                                "symbol": cand.symbol,
+                                "ai_decision": ai_res.decision,
+                                "target_direction": pos_dir,
+                                "veto_reason": sess_veto
+                            }, session_id=session_id)
+                            return execution_report, tokens_used, False
+
+                        now_ms_submit = int(time.time() * 1000)
+                        max_quote_age_ms = getattr(self.config, "max_quote_age_ms", 60_000)
+                        if now_ms_submit - quote_ts > max_quote_age_ms or quote_ts > now_ms_submit + 10_000 or quote_ts <= 100_000_000_000:
+                            sess_veto = f"quote_stale_at_submission:{now_ms_submit - quote_ts}ms>{max_quote_age_ms}ms"
                             execution_report["veto_reason"] = sess_veto
                             AuditLogger.log_event("TRADE_EXECUTION_VETO", {
                                 "symbol": cand.symbol,
@@ -923,7 +935,15 @@ class SessionOrchestrator:
                     target_pos_side = entry.direction.upper()
                     target_order_side = "SELL" if target_pos_side == "SHORT" else "BUY"
                     executable_price = ask1 if target_pos_side == "LONG" else bid1
-                    quote_ts = w_depth.get("T") or int(time.time() * 1000)
+                    quote_ts = int(w_depth.get("T") or time.time() * 1000)
+                    now_ms = int(time.time() * 1000)
+                    max_quote_age_ms = getattr(self.config, "max_quote_age_ms", 60_000)
+                    if now_ms - quote_ts > max_quote_age_ms or quote_ts > now_ms + 10_000 or quote_ts <= 100_000_000_000:
+                        AuditLogger.log_event("WATCHLIST_VETO", {
+                            "symbol": entry.symbol,
+                            "reason": f"quote_stale:{now_ms - quote_ts}ms>{max_quote_age_ms}ms"
+                        }, session_id=session_id)
+                        continue
 
                     if trigger_res.trigger_price > 0:
                         drift = abs(executable_price - trigger_res.trigger_price) / trigger_res.trigger_price
@@ -1048,6 +1068,15 @@ class SessionOrchestrator:
                                         AuditLogger.log_event("WATCHLIST_VETO", {
                                             "symbol": entry.symbol,
                                             "reason": "QUOTA_EXHAUSTED"
+                                        }, session_id=session_id)
+                                        break
+
+                                    now_ms_wl_submit = int(time.time() * 1000)
+                                    max_quote_age_ms = getattr(self.config, "max_quote_age_ms", 60_000)
+                                    if now_ms_wl_submit - quote_ts > max_quote_age_ms or quote_ts > now_ms_wl_submit + 10_000 or quote_ts <= 100_000_000_000:
+                                        AuditLogger.log_event("WATCHLIST_VETO", {
+                                            "symbol": entry.symbol,
+                                            "reason": f"quote_stale_at_submission:{now_ms_wl_submit - quote_ts}ms>{max_quote_age_ms}ms"
                                         }, session_id=session_id)
                                         break
 

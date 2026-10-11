@@ -14,6 +14,7 @@ present invalidation risk has been explicitly rebutted.
 Fail-closed: an absent or unparseable answer is treated as UNKNOWN, which blocks ENTER.
 """
 import pytest
+import time
 
 from ai_evaluator import (
     AIEvaluationResult,
@@ -189,7 +190,7 @@ def test_orchestrator_cycle_downgrades_unrebutted_invalidation_to_wait(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mocker.patch.object(orch.client, "get_klines", return_value=[])
-    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["0.01079", "1000"]], "asks": [["0.01081", "1000"]], "T": 1000})
+    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["0.01079", "1000"]], "asks": [["0.01081", "1000"]], "T": int(time.time() * 1000)})
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.0001, "atr_to_friction": 8.0, "atr": 0.0005})
 
     # Mock raw HTTP response from AI gateway with unrebutted invalidation risk (JEANPHIL pattern)
@@ -251,7 +252,7 @@ def test_orchestrator_cycle_allows_rebutted_invalidation(mocker):
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mocker.patch.object(orch.client, "get_klines", return_value=[])
-    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["0.999", "1000"]], "asks": [["1.001", "1000"]], "T": 1000})
+    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["0.999", "1000"]], "asks": [["1.001", "1000"]], "T": int(time.time() * 1000)})
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.0001, "atr_to_friction": 8.0, "atr": 0.05})
 
     # Mock raw HTTP response with valid explicit rebuttal

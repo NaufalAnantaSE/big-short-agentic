@@ -93,7 +93,7 @@ def test_direct_stop_session_during_set_leverage_blocks_place_order(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     rep, tokens, placed = orch._evaluate_and_execute_candidate(
@@ -130,7 +130,7 @@ def test_thread_race_stop_session_concurrent_barrier(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["4.995", "100"]],
         "asks": [["5.005", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     barrier = threading.Barrier(2)
@@ -209,7 +209,7 @@ def test_watchlist_stop_session_during_set_leverage_blocks_place_order(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
 

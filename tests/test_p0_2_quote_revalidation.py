@@ -1,4 +1,5 @@
 import pytest
+import time
 from orchestrator import SessionOrchestrator
 from config import AppConfig
 from scanner import CandidatePair
@@ -50,11 +51,11 @@ def test_order_rejected_when_price_drift_exceeds_threshold(mocker):
         is_valid=True
     ))
 
-    # Fresh depth returns drifted price: 10.10 (drift = 1.0% > 0.50% threshold)
+    now_ts = int(time.time() * 1000)
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["10.10", "100"]],
         "asks": [["10.11", "100"]],
-        "T": 1700000000000
+        "T": now_ts
     })
 
     mock_place_order = mocker.patch.object(orch.client, "place_order")
@@ -94,11 +95,12 @@ def test_order_accepted_and_resized_when_drift_within_threshold(mocker):
         is_valid=True
     ))
 
-    # Fresh depth returns slight drift within tolerance: bid 10.02 (drift = 0.20% <= 0.50%)
+    # Fresh depth returns slightly drifted price: 10.02 (drift = 0.2% <= 0.50% threshold)
+    now_ts = int(time.time() * 1000)
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["10.02", "100"]],
         "asks": [["10.03", "100"]],
-        "T": 1700000000000
+        "T": now_ts
     })
     mocker.patch.object(orch.client, "set_leverage", return_value={"leverage": 20})
     mock_place_order = mocker.patch.object(orch.client, "place_order", return_value={
@@ -138,10 +140,11 @@ def test_order_rejected_when_spread_blows_out_at_execution(mocker):
     ))
 
     # Fresh depth shows spread blowout: bid=10.00, ask=10.06 -> spread 0.60% > max 0.35%
+    now_ts = int(time.time() * 1000)
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["10.00", "100"]],
         "asks": [["10.06", "100"]],
-        "T": 1700000000000
+        "T": now_ts
     })
 
     mock_place_order = mocker.patch.object(orch.client, "place_order")
@@ -178,10 +181,11 @@ def test_telemetry_records_actual_avg_fill_and_slippage(mocker):
     ))
 
     # Quote executable price is 10.00
+    now_ts = int(time.time() * 1000)
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["10.00", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": now_ts
     })
     mocker.patch.object(orch.client, "set_leverage", return_value={"leverage": 20})
 
@@ -206,4 +210,4 @@ def test_telemetry_records_actual_avg_fill_and_slippage(mocker):
     assert kwargs["avg_fill_price"] == 9.98
     assert kwargs["request_price"] == 10.00
     assert kwargs["slippage"] == pytest.approx(-0.02)
-    assert kwargs["quote_ts"] == 1700000000000
+    assert kwargs["quote_ts"] == now_ts

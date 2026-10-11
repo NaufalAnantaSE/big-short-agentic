@@ -19,6 +19,7 @@ These tests assert:
 - Watchlist honors anti-reentry and logs full fill provenance identical to direct execution.
 """
 import pytest
+import time
 from config import AppConfig
 from orchestrator import SessionOrchestrator
 from scanner import CandidatePair
@@ -90,7 +91,7 @@ def test_direct_missing_avg_fill_does_not_fabricate_price_or_slippage(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     # Exchange responds with orderId and status SUBMITTED, but NO avgPrice or price
@@ -134,7 +135,7 @@ def test_direct_exchange_reported_fill_records_exact_provenance(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     # Exchange reports actual fill at 9.98 (short filled 0.01 below bid1)
@@ -197,7 +198,7 @@ def test_watchlist_sizes_at_executable_price_not_mid_price(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mocker.patch.object(orch.client, "set_leverage")
@@ -253,7 +254,7 @@ def test_watchlist_missing_avg_fill_records_pending_provenance(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mocker.patch.object(orch.client, "set_leverage")
@@ -310,7 +311,7 @@ def test_watchlist_anti_reentry_vetoes_duplicate_symbol_in_same_session(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.99", "100"]],
         "asks": [["10.01", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mock_place_order = mocker.patch.object(orch.client, "place_order")
@@ -359,7 +360,7 @@ def test_watchlist_spread_blowout_vetoes_order(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.95", "100"]],
         "asks": [["10.05", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mock_place_order = mocker.patch.object(orch.client, "place_order")

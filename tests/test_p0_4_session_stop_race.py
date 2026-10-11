@@ -1,4 +1,5 @@
 import pytest
+import time
 from orchestrator import SessionOrchestrator
 from config import AppConfig
 from scanner import CandidatePair
@@ -71,7 +72,7 @@ def test_session_stop_mid_ai_evaluation_blocks_place_order(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["9.995", "100"]],
         "asks": [["10.005", "100"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     rep, tokens, placed = orch._evaluate_and_execute_candidate(
@@ -141,7 +142,7 @@ def test_generation_token_mismatch_blocks_stale_order(mocker):
     mocker.patch.object(orch.client, "get_depth", return_value={
         "bids": [["0.1998", "1000"]],
         "asks": [["0.2002", "1000"]],
-        "T": 1700000000000
+        "T": int(time.time() * 1000)
     })
 
     rep, tokens, placed = orch._evaluate_and_execute_candidate(
