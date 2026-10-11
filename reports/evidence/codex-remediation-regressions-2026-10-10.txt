@@ -1,0 +1,134 @@
+FFFFFFFFFFFFFFF                                                          [100%]
+=================================== FAILURES ===================================
+____________ test_depth_timeout_must_not_submit_using_scanner_quote ____________
+test_codex_review_regressions.py:82: in test_depth_timeout_must_not_submit_using_scanner_quote
+    assert orch.client.place_order.call_count == 0, "Order submitted using stale scanner bid/ask after depth failure"
+E   AssertionError: Order submitted using stale scanner bid/ask after depth failure
+E   assert 1 == 0
+E    +  where 1 = <Mock id='139711759138304'>.call_count
+E    +    where <Mock id='139711759138304'> = <client.BingXClient object at 0x7f112dbd8410>.place_order
+E    +      where <client.BingXClient object at 0x7f112dbd8410> = <orchestrator.SessionOrchestrator object at 0x7f112dbd8380>.client
+__________________ test_old_depth_timestamp_must_be_rejected ___________________
+test_codex_review_regressions.py:88: in test_old_depth_timestamp_must_be_rejected
+    assert orch.client.place_order.call_count == 0, "Order submitted with one-hour-old orderbook"
+E   AssertionError: Order submitted with one-hour-old orderbook
+E   assert 1 == 0
+E    +  where 1 = <Mock id='139711759354864'>.call_count
+E    +    where <Mock id='139711759354864'> = <client.BingXClient object at 0x7f112dc9ad20>.place_order
+E    +      where <client.BingXClient object at 0x7f112dc9ad20> = <orchestrator.SessionOrchestrator object at 0x7f112dc9afc0>.client
+_________________ test_new_session_cannot_adopt_old_ai_signal __________________
+test_codex_review_regressions.py:100: in test_new_session_cannot_adopt_old_ai_signal
+    assert orch.client.place_order.call_count == 0, "Old SHORT signal submitted into replacement LONG session"
+E   AssertionError: Old SHORT signal submitted into replacement LONG session
+E   assert 1 == 0
+E    +  where 1 = <Mock id='139711759359952'>.call_count
+E    +    where <Mock id='139711759359952'> = <client.BingXClient object at 0x7f112dc994c0>.place_order
+E    +      where <client.BingXClient object at 0x7f112dc994c0> = <orchestrator.SessionOrchestrator object at 0x7f112dc99430>.client
+________________ test_unknown_fill_survives_tenant_and_database ________________
+test_codex_review_regressions.py:114: in test_unknown_fill_survives_tenant_and_database
+    assert row == {"status": "SUBMITTED", "avg_fill_price": None}, row
+E   AssertionError: {'status': 'FILLED', 'avg_fill_price': 100.0}
+E   assert {'status': 'F...price': 100.0} == {'status': 'S..._price': None}
+E     
+E     Differing items:
+E     {'avg_fill_price': 100.0} != {'avg_fill_price': None}
+E     {'status': 'FILLED'} != {'status': 'SUBMITTED'}
+E     Use -v to get more diff
+________ test_worker_rehydrates_risk_and_loss_state_before_first_cycle _________
+test_codex_review_regressions.py:131: in test_worker_rehydrates_risk_and_loss_state_before_first_cycle
+    assert actual == (2.5, -4, 3, ["already-seen"]), actual
+E   AssertionError: (None, 0.0, 0, [])
+E   assert (None, 0.0, 0, []) == (2.5, -4, 3, ['already-seen'])
+E     
+E     At index 0 diff: None != 2.5
+E     Use -v to get more diff
+____________ test_yesterdays_late_income_not_counted_as_todays_loss ____________
+test_codex_review_regressions.py:143: in test_yesterdays_late_income_not_counted_as_todays_loss
+    assert orch.current_session.daily_realized_pnl == 0, orch.current_session.daily_realized_pnl
+E   AssertionError: -4.0
+E   assert -4.0 == 0
+E    +  where -4.0 = SessionState(session_id='bx_sess_1791619081_cac927', status='ACTIVE_SEARCHING', generation_token='3bd4d5586a0f410199b4...s=1, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-10', processed_income_ids=['yesterday-late']).daily_realized_pnl
+E    +    where SessionState(session_id='bx_sess_1791619081_cac927', status='ACTIVE_SEARCHING', generation_token='3bd4d5586a0f410199b4...s=1, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-10', processed_income_ids=['yesterday-late']) = <orchestrator.SessionOrchestrator object at 0x7f112dae0e00>.current_session
+___________ test_empty_session_history_does_not_claim_manual_income ____________
+test_codex_review_regressions.py:151: in test_empty_session_history_does_not_claim_manual_income
+    assert orch.current_session.daily_realized_pnl == 0, "Unowned profit credited to strategy daily loss budget"
+E   AssertionError: Unowned profit credited to strategy daily loss budget
+E   assert 10.0 == 0
+E    +  where 10.0 = SessionState(session_id='bx_sess_1791619081_7b34aa', status='ACTIVE_SEARCHING', generation_token='55ba95695c204b3b974c...ses=0, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-10', processed_income_ids=['manual-close']).daily_realized_pnl
+E    +    where SessionState(session_id='bx_sess_1791619081_7b34aa', status='ACTIVE_SEARCHING', generation_token='55ba95695c204b3b974c...ses=0, max_consecutive_losses=3, cooldown_until=0.0, last_pnl_date='2026-10-10', processed_income_ids=['manual-close']) = <orchestrator.SessionOrchestrator object at 0x7f112dc9bf50>.current_session
+_____________ test_day_reset_is_persisted_even_when_no_new_income ______________
+test_codex_review_regressions.py:161: in test_day_reset_is_persisted_even_when_no_new_income
+    assert persist.call_count == 1, "Day reset lost on next DB hydration because empty income returns before persistence"
+E   AssertionError: Day reset lost on next DB hydration because empty income returns before persistence
+E   assert 0 == 1
+E    +  where 0 = <Mock id='139711759357600'>.call_count
+__________________ test_unknown_income_state_blocks_new_scan ___________________
+test_codex_review_regressions.py:167: in test_unknown_income_state_blocks_new_scan
+    assert orch.scanner.scan_universe.call_count == 0, "Risk ingestion failure still permits entry scanning"
+E   AssertionError: Risk ingestion failure still permits entry scanning
+E   assert 1 == 0
+E    +  where 1 = <Mock id='139711759138736'>.call_count
+E    +    where <Mock id='139711759138736'> = <scanner.MarketScanner object at 0x7f112ec00b60>.scan_universe
+E    +      where <scanner.MarketScanner object at 0x7f112ec00b60> = <orchestrator.SessionOrchestrator object at 0x7f112dc986e0>.scanner
+__________ test_simultaneous_evaluations_cannot_duplicate_same_symbol __________
+test_codex_review_regressions.py:179: in test_simultaneous_evaluations_cannot_duplicate_same_symbol
+    assert orch.client.place_order.call_count <= 1, f"Submitted {orch.client.place_order.call_count} orders for same symbol"
+E   AssertionError: Submitted 2 orders for same symbol
+E   assert 2 <= 1
+E    +  where 2 = <Mock id='139711757565056'>.call_count
+E    +    where <Mock id='139711757565056'> = <client.BingXClient object at 0x7f112dbd8860>.place_order
+E    +      where <client.BingXClient object at 0x7f112dbd8860> = <orchestrator.SessionOrchestrator object at 0x7f112dbd8290>.client
+________________ test_ema_warmup_invalid_must_block_entry_gate _________________
+test_codex_review_regressions.py:191: in test_ema_warmup_invalid_must_block_entry_gate
+    assert hard_gate(features, direction="LONG")[0] is False, "EMA50 warmup invalid but trading gate passes"
+E   AssertionError: EMA50 warmup invalid but trading gate passes
+E   assert True is False
+_______________ test_string_null_invalidation_answer_is_unknown ________________
+test_codex_review_regressions.py:198: in test_string_null_invalidation_answer_is_unknown
+    assert apply_invalidation_gate(result)[0] == "WAIT", "String null is treated as explicit no-risk"
+E   AssertionError: String null is treated as explicit no-risk
+E   assert 'ENTER_SHORT' == 'WAIT'
+E     
+E     - WAIT
+E     + ENTER_SHORT
+__________ test_unrebutted_invalidation_cannot_reenter_via_watchlist ___________
+test_codex_review_regressions.py:216: in test_unrebutted_invalidation_cannot_reenter_via_watchlist
+    assert orch.client.place_order.call_count == 0, "WAIT invalidation reason was discarded; watchlist submitted without reassessment"
+E   AssertionError: WAIT invalidation reason was discarded; watchlist submitted without reassessment
+E   assert 1 == 0
+E    +  where 1 = <Mock id='139711759357168'>.call_count
+E    +    where <Mock id='139711759357168'> = <client.BingXClient object at 0x7f112dae3950>.place_order
+E    +      where <client.BingXClient object at 0x7f112dae3950> = <orchestrator.SessionOrchestrator object at 0x7f112dae3890>.client
+___________ test_fixed_risk_must_respect_requested_leverage_ceiling ____________
+test_codex_review_regressions.py:223: in test_fixed_risk_must_respect_requested_leverage_ceiling
+    assert not result.is_valid or result.effective_leverage <= 5, (
+E   AssertionError: Requested 5x, accepted 20x
+E   assert (not True or 20 <= 5)
+E    +  where True = SizingResult(symbol='TEST-USDT', target_margin=4.445, effective_leverage=20, entry_price=100.0, notional_value=88.9, q...d_ratio=2.0, risk_amount_usdt=2.0, potential_profit_usdt=4.0, sl_percent=2.25, tp_percent=4.5, risk_pct_of_margin=45.0).is_valid
+E    +  and   20 = SizingResult(symbol='TEST-USDT', target_margin=4.445, effective_leverage=20, entry_price=100.0, notional_value=88.9, q...d_ratio=2.0, risk_amount_usdt=2.0, potential_profit_usdt=4.0, sl_percent=2.25, tp_percent=4.5, risk_pct_of_margin=45.0).effective_leverage
+____________ test_api_risk_budget_update_is_not_silently_discarded _____________
+test_codex_review_regressions.py:233: in test_api_risk_budget_update_is_not_silently_discarded
+    assert update.call_args.kwargs.get("risk_budget_per_trade") == 0.5, update.call_args.kwargs
+E   AssertionError: {'user_id': 1, 'margin_per_pos': None, 'quota': None, 'auto_scan': None, ...}
+E   assert None == 0.5
+E    +  where None = <built-in method get of dict object at 0x7f112c723900>('risk_budget_per_trade')
+E    +    where <built-in method get of dict object at 0x7f112c723900> = {'user_id': 1, 'margin_per_pos': None, 'quota': None, 'auto_scan': None, ...}.get
+E    +      where {'user_id': 1, 'margin_per_pos': None, 'quota': None, 'auto_scan': None, ...} = call(user_id=1, margin_per_pos=None, quota=None, auto_scan=None, scan_interval=None).kwargs
+E    +        where call(user_id=1, margin_per_pos=None, quota=None, auto_scan=None, scan_interval=None) = <Mock id='139711757943296'>.call_args
+=========================== short test summary info ============================
+FAILED test_codex_review_regressions.py::test_depth_timeout_must_not_submit_using_scanner_quote
+FAILED test_codex_review_regressions.py::test_old_depth_timestamp_must_be_rejected
+FAILED test_codex_review_regressions.py::test_new_session_cannot_adopt_old_ai_signal
+FAILED test_codex_review_regressions.py::test_unknown_fill_survives_tenant_and_database
+FAILED test_codex_review_regressions.py::test_worker_rehydrates_risk_and_loss_state_before_first_cycle
+FAILED test_codex_review_regressions.py::test_yesterdays_late_income_not_counted_as_todays_loss
+FAILED test_codex_review_regressions.py::test_empty_session_history_does_not_claim_manual_income
+FAILED test_codex_review_regressions.py::test_day_reset_is_persisted_even_when_no_new_income
+FAILED test_codex_review_regressions.py::test_unknown_income_state_blocks_new_scan
+FAILED test_codex_review_regressions.py::test_simultaneous_evaluations_cannot_duplicate_same_symbol
+FAILED test_codex_review_regressions.py::test_ema_warmup_invalid_must_block_entry_gate
+FAILED test_codex_review_regressions.py::test_string_null_invalidation_answer_is_unknown
+FAILED test_codex_review_regressions.py::test_unrebutted_invalidation_cannot_reenter_via_watchlist
+FAILED test_codex_review_regressions.py::test_fixed_risk_must_respect_requested_leverage_ceiling
+FAILED test_codex_review_regressions.py::test_api_risk_budget_update_is_not_silently_discarded
+15 failed, 4 warnings in 0.88s
