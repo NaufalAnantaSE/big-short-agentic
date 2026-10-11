@@ -216,7 +216,8 @@ class SessionOrchestrator:
                     consecutive_losses=0,
                     cooldown_until=self.current_session.cooldown_until,
                     last_pnl_date=today_str,
-                    processed_income_ids=json.dumps(self.current_session.processed_income_ids)
+                    processed_income_ids=json.dumps(self.current_session.processed_income_ids),
+                    executed_symbols=json.dumps(self.current_session.executed_symbols)
                 )
             except Exception:
                 pass
@@ -278,7 +279,8 @@ class SessionOrchestrator:
                 consecutive_losses=self.current_session.consecutive_losses,
                 cooldown_until=self.current_session.cooldown_until,
                 last_pnl_date=self.current_session.last_pnl_date,
-                processed_income_ids=json.dumps(self.current_session.processed_income_ids)
+                processed_income_ids=json.dumps(self.current_session.processed_income_ids),
+                executed_symbols=json.dumps(self.current_session.executed_symbols)
             )
         except Exception:
             pass

@@ -151,6 +151,8 @@ def init_db():
             cursor.execute("ALTER TABLE sessions ADD COLUMN processed_income_ids TEXT DEFAULT '[]'")
         if "risk_budget_per_trade" not in existing_cols:
             cursor.execute("ALTER TABLE sessions ADD COLUMN risk_budget_per_trade REAL DEFAULT 2.0")
+        if "executed_symbols" not in existing_cols:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN executed_symbols TEXT DEFAULT '[]'")
 
         conn.commit()
 
@@ -297,20 +299,33 @@ def update_session_pnl_state(
     consecutive_losses: int,
     cooldown_until: float,
     last_pnl_date: str,
-    processed_income_ids: str = "[]"
+    processed_income_ids: str = "[]",
+    executed_symbols: Optional[str] = None
 ):
-    """F-06: Persists daily realized PnL, loss streaks, cooldown, and processed income IDs."""
+    """F-06 & R-01: Persists daily realized PnL, loss streaks, cooldown, income IDs, and executed symbols."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE sessions
-            SET daily_realized_pnl = ?,
-                consecutive_losses = ?,
-                cooldown_until = ?,
-                last_pnl_date = ?,
-                processed_income_ids = ?
-            WHERE session_id = ?
-        """, (daily_realized_pnl, consecutive_losses, cooldown_until, last_pnl_date, processed_income_ids, session_id))
+        if executed_symbols is not None:
+            cursor.execute("""
+                UPDATE sessions
+                SET daily_realized_pnl = ?,
+                    consecutive_losses = ?,
+                    cooldown_until = ?,
+                    last_pnl_date = ?,
+                    processed_income_ids = ?,
+                    executed_symbols = ?
+                WHERE session_id = ?
+            """, (daily_realized_pnl, consecutive_losses, cooldown_until, last_pnl_date, processed_income_ids, executed_symbols, session_id))
+        else:
+            cursor.execute("""
+                UPDATE sessions
+                SET daily_realized_pnl = ?,
+                    consecutive_losses = ?,
+                    cooldown_until = ?,
+                    last_pnl_date = ?,
+                    processed_income_ids = ?
+                WHERE session_id = ?
+            """, (daily_realized_pnl, consecutive_losses, cooldown_until, last_pnl_date, processed_income_ids, session_id))
         conn.commit()
 
 

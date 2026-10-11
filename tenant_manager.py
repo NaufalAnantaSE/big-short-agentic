@@ -148,6 +148,17 @@ class TenantSessionManager:
         elif not isinstance(exec_syms, list):
             exec_syms = []
 
+        if not exec_syms and sess_data.get("session_id"):
+            try:
+                import db
+                with db.get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT DISTINCT symbol FROM order_records WHERE session_id = ?", (sess_data["session_id"],))
+                    rows = cursor.fetchall()
+                    exec_syms = [r[0] for r in rows if r and r[0]]
+            except Exception:
+                pass
+
         if not orch.current_session:
             orch.current_session = SessionState(
                 session_id=sess_data["session_id"],
