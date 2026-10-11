@@ -9,6 +9,7 @@ Tests:
 """
 
 import json
+import time
 import pytest
 from unittest.mock import MagicMock
 from ai_evaluator import normalize_ai_payload, AIEvaluationResult, AIEvaluator, BatchTriageResult, TriageCandidate
@@ -152,6 +153,7 @@ def test_orchestrator_exchange_demo_executes_long_order(mocker):
 
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
+    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["149.95", "1000"]], "asks": [["150.05", "1000"]], "T": int(time.time() * 1000)})
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.07, "funding_rate": 0.0001, "atr_to_friction": 10.0})
     mocker.patch.object(orch.ai, "evaluate_batch_triage", return_value=BatchTriageResult(
         ranked_candidates=[TriageCandidate(symbol="SOL-USDT", rank=1, action="DEEP_ANALYZE", conviction_score=85)],

@@ -6,6 +6,7 @@ veto of barred directions, and N3 watchlist clearance.
 """
 
 import pytest
+import time
 from unittest.mock import MagicMock
 from config import AppConfig
 from ai_evaluator import (
@@ -389,6 +390,7 @@ def test_both_mode_dip_to_long_buy_order_tp_sl(mocker):
     mocker.patch.object(orch.scanner, "get_occupied_symbols", return_value=set())
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
+    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["99.9", "1000"]], "asks": [["100.1", "1000"]], "T": int(time.time() * 1000)})
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.001, "atr_to_friction": 8.0, "atr": 2.0})
 
     def fake_gate(features, max_spread, direction="SHORT"):

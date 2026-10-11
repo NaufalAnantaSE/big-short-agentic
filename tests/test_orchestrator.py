@@ -1,6 +1,7 @@
 """Unit tests for SessionOrchestrator and Pre-Flight Leverage Assertion Gate."""
 
 import pytest
+import time
 from orchestrator import SessionOrchestrator
 from config import AppConfig
 from scanner import CandidatePair
@@ -30,6 +31,7 @@ def test_preflight_leverage_assertion_before_order(mocker):
 
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[candidate])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
+    mocker.patch.object(orch.client, "get_depth", return_value={"bids": [["0.00799", "1000"]], "asks": [["0.00800", "1000"]], "T": int(time.time() * 1000)})
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.1, "funding_rate": 0.001, "atr_to_friction": 8.0})
     mocker.patch.object(orch.ai, "evaluate_candidate", return_value=AIEvaluationResult(
         symbol="1000PEPE-USDT",

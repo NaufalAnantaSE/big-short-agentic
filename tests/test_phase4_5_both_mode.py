@@ -1,6 +1,7 @@
 """Tests for Phase 4 & 5: BOTH direction mode, coexistence safety, and multi-directional execution."""
 
 import pytest
+import time
 from unittest.mock import MagicMock
 from contracts import DirectionMode, ExecutionMode
 from orchestrator import SessionOrchestrator
@@ -44,6 +45,12 @@ def test_both_direction_mode_allows_both_short_and_long_entries(mocker):
 
     mocker.patch.object(orch.scanner, "scan_universe", return_value=[cand_short, cand_long])
     mocker.patch.object(orch.client, "get_klines", return_value=[])
+    def fake_depth(symbol, limit=5):
+        now_ms = int(time.time() * 1000)
+        if symbol == "MEME1-USDT":
+            return {"bids": [["9.99", "1000"]], "asks": [["10.01", "1000"]], "T": now_ms}
+        return {"bids": [["4.995", "1000"]], "asks": [["5.005", "1000"]], "T": now_ms}
+    mocker.patch.object(orch.client, "get_depth", side_effect=fake_depth)
     mocker.patch("orchestrator.build_candidate_features", return_value={"fresh": True, "spread_pct": 0.2, "funding_rate": 0.0001, "atr_to_friction": 10.0})
 
     def mock_eval(*args, **kwargs):
