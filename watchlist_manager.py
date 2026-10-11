@@ -30,6 +30,9 @@ class WatchlistEntry(BaseModel):
     leverage: int = 20
     stop_loss_price: Optional[float] = None
     take_profit_price: Optional[float] = None
+    invalidation_risk_present: bool = False
+    invalidation_risk_detail: str = ""
+    gate_downgrade_reason: Optional[str] = None
 
     # Resting order tracking
     resting_order_id: Optional[str] = None
@@ -78,7 +81,10 @@ class WatchlistManager:
         stop_loss_price: Optional[float] = None,
         take_profit_price: Optional[float] = None,
         client: Optional[BingXClient] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        invalidation_risk_present: bool = False,
+        invalidation_risk_detail: str = "",
+        gate_downgrade_reason: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
         """
         Adds a candidate to the watchlist with strict capacity enforcement.
@@ -131,6 +137,9 @@ class WatchlistManager:
             leverage=leverage,
             stop_loss_price=stop_loss_price,
             take_profit_price=take_profit_price,
+            invalidation_risk_present=invalidation_risk_present,
+            invalidation_risk_detail=invalidation_risk_detail,
+            gate_downgrade_reason=gate_downgrade_reason,
             last_checked_at=now
         )
         self.entries[symbol] = new_entry
