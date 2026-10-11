@@ -53,7 +53,7 @@ def _parse_tristate_flag(raw: Any) -> Optional[bool]:
     text = str(raw).strip().lower()
     if text in ("yes", "y", "true", "t", "1", "ya", "present"):
         return True
-    if text in ("no", "n", "false", "f", "0", "tidak", "absent", "none", "null"):
+    if text in ("no", "n", "false", "f", "0", "tidak", "absent"):
         return False
     return None
 
