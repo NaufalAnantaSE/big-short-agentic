@@ -741,6 +741,10 @@ def hard_gate(
     if ratio is not None and ratio < 3.0:
         universal_reasons.append("atr_below_friction_threshold")
 
+    ema = features.get("ema_trend")
+    if isinstance(ema, dict) and ema.get("valid") is False:
+        universal_reasons.append("ema_warmup_invalid")
+
     # Direction-specific veto checks
     short_reasons: List[str] = []
     if funding is not None and funding <= -0.005:
