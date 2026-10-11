@@ -331,7 +331,8 @@ def update_session_params(
     quota: Optional[int] = None,
     status: Optional[str] = None,
     auto_scan: Optional[bool] = None,
-    scan_interval: Optional[int] = None
+    scan_interval: Optional[int] = None,
+    risk_budget_per_trade: Optional[float] = None
 ):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -352,6 +353,9 @@ def update_session_params(
         if scan_interval is not None:
             fields.append("scan_interval = ?")
             vals.append(int(scan_interval))
+        if risk_budget_per_trade is not None:
+            fields.append("risk_budget_per_trade = ?")
+            vals.append(float(risk_budget_per_trade))
         if fields:
             vals.append(session_id)
             cursor.execute(f"UPDATE sessions SET {', '.join(fields)} WHERE session_id = ?", tuple(vals))
@@ -445,7 +449,7 @@ def record_order(
             user_id, session_id, symbol, side, position_side, quantity, price,
             notional, leverage, eff_lev, client_order_id, order_id,
             status, now, stop_loss_price, take_profit_price,
-            quote_ts, request_price or price, avg_fill_price or price, entry_fee
+            quote_ts, request_price or price, avg_fill_price, entry_fee
         ))
         conn.commit()
 
@@ -485,7 +489,7 @@ def record_trade_entry(
             user_id, session_id, symbol, side, position_side, quantity, price,
             notional, effective_leverage, effective_leverage, client_order_id,
             order_id, status, now, stop_loss_price, take_profit_price, quote_ts,
-            request_price, avg_fill_price or price, entry_fee
+            request_price, avg_fill_price, entry_fee
         ))
         conn.commit()
 

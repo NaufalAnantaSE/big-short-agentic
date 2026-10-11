@@ -265,7 +265,8 @@ def update_session(req: SessionUpdateRequest, user: Dict[str, Any] = Depends(req
             margin_per_pos=req.margin_per_pos,
             quota=req.quota,
             auto_scan=req.auto_scan,
-            scan_interval=req.scan_interval
+            scan_interval=req.scan_interval,
+            risk_budget_per_trade=req.risk_budget_per_trade
         )
         return {"success": True, "session": res}
     except Exception as exc:

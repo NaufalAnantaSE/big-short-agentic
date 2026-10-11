@@ -7,6 +7,7 @@ Includes autonomous background runner for persistent scanning when frontend is c
 import time
 import json
 import threading
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Set
 from config import AppConfig
 from client import BingXClient, BingXAPIError
@@ -106,6 +107,89 @@ class TenantSessionManager:
             )
             t.start()
 
+    def _hydrate_session_state(
+        self,
+        orch: SessionOrchestrator,
+        sess_data: Dict[str, Any],
+        active_count: Optional[int] = None
+    ) -> SessionState:
+        sess_mode = sess_data.get("mode", getattr(orch.config, "universe_mode", "PUMP_GAINERS"))
+        orch.config.universe_mode = sess_mode
+        quota = int(sess_data.get("quota", 10))
+        filled = active_count if active_count is not None else int(sess_data.get("filled_count", 0))
+
+        risk_budget = sess_data.get("risk_budget_per_trade")
+        if risk_budget is not None:
+            try:
+                risk_budget = float(risk_budget)
+            except (ValueError, TypeError):
+                risk_budget = None
+
+        daily_pnl = float(sess_data.get("daily_realized_pnl", 0.0) or 0.0)
+        streak = int(sess_data.get("consecutive_losses", 0) or 0)
+        cooldown = float(sess_data.get("cooldown_until", 0.0) or 0.0)
+        last_date = sess_data.get("last_pnl_date")
+
+        p_ids = sess_data.get("processed_income_ids")
+        if isinstance(p_ids, str):
+            try:
+                p_ids = json.loads(p_ids)
+            except Exception:
+                p_ids = []
+        elif not isinstance(p_ids, list):
+            p_ids = []
+
+        exec_syms = sess_data.get("executed_symbols")
+        if isinstance(exec_syms, str):
+            try:
+                exec_syms = json.loads(exec_syms)
+            except Exception:
+                exec_syms = []
+        elif not isinstance(exec_syms, list):
+            exec_syms = []
+
+        if not orch.current_session:
+            orch.current_session = SessionState(
+                session_id=sess_data["session_id"],
+                status=sess_data.get("status", "ACTIVE_SEARCHING"),
+                margin_per_pos=float(sess_data.get("margin_per_pos", 5.0)),
+                leverage=int(sess_data.get("leverage", 20)),
+                quota=quota,
+                environment=sess_data.get("environment", "BINGX_VST"),
+                execution_mode=sess_data.get("execution_mode", "EXCHANGE_DEMO"),
+                direction_mode=sess_data.get("direction_mode", "SHORT"),
+                exit_policy=sess_data.get("exit_policy", "MANUAL_ONLY"),
+                universe_mode=sess_mode,
+                filled_count=filled,
+                started_at=float(sess_data.get("started_at", time.time())),
+                risk_budget_per_trade=risk_budget,
+                daily_realized_pnl=daily_pnl,
+                consecutive_losses=streak,
+                cooldown_until=cooldown,
+                last_pnl_date=str(last_date) if last_date else datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                processed_income_ids=p_ids,
+                executed_symbols=exec_syms
+            )
+        else:
+            orch.current_session.universe_mode = sess_mode
+            orch.current_session.filled_count = filled
+            if risk_budget is not None:
+                orch.current_session.risk_budget_per_trade = risk_budget
+            if sess_data.get("daily_realized_pnl") is not None:
+                orch.current_session.daily_realized_pnl = daily_pnl
+            if sess_data.get("consecutive_losses") is not None:
+                orch.current_session.consecutive_losses = streak
+            if sess_data.get("cooldown_until") is not None:
+                orch.current_session.cooldown_until = cooldown
+            if last_date:
+                orch.current_session.last_pnl_date = str(last_date)
+            if p_ids:
+                orch.current_session.processed_income_ids = p_ids
+            if exec_syms:
+                orch.current_session.executed_symbols = exec_syms
+
+        return orch.current_session
+
     def _execute_scheduled_cycle(self, user_id: int, sess: Dict[str, Any]):
         try:
             # 1. Sync positions first
@@ -115,26 +199,7 @@ class TenantSessionManager:
             quota = int(sess.get("quota", 10))
 
             orch = self.get_orchestrator(user_id)
-            sess_mode = sess.get("mode", "PUMP_GAINERS")
-            orch.config.universe_mode = sess_mode
-            if not orch.current_session:
-                orch.current_session = SessionState(
-                    session_id=sess["session_id"],
-                    status=sess["status"],
-                    margin_per_pos=sess["margin_per_pos"],
-                    leverage=sess["leverage"],
-                    quota=quota,
-                    environment=sess.get("environment", "BINGX_VST"),
-                    execution_mode=sess.get("execution_mode", "EXCHANGE_DEMO"),
-                    direction_mode=sess.get("direction_mode", "SHORT"),
-                    exit_policy=sess.get("exit_policy", "MANUAL_ONLY"),
-                    universe_mode=sess_mode,
-                    filled_count=active_count,
-                    started_at=sess["started_at"]
-                )
-            else:
-                orch.current_session.universe_mode = sess_mode
-                orch.current_session.filled_count = active_count
+            self._hydrate_session_state(orch, sess, active_count)
 
             # If quota is already filled:
             if active_count >= quota:
@@ -501,31 +566,18 @@ class TenantSessionManager:
         margin_per_pos: Optional[float] = None,
         quota: Optional[int] = None,
         auto_scan: Optional[bool] = None,
-        scan_interval: Optional[int] = None
+        scan_interval: Optional[int] = None,
+        risk_budget_per_trade: Optional[float] = None
     ) -> Dict[str, Any]:
         """Allows dynamically updating margin, quota, and auto_scan for active user session."""
         orch = self.get_orchestrator(user_id)
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
             if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
-                u_mode = latest.get("mode", "PUMP_GAINERS")
-                orch.config.universe_mode = u_mode
-                orch.current_session = SessionState(
-                    session_id=latest["session_id"],
-                    status=latest["status"],
-                    margin_per_pos=latest["margin_per_pos"],
-                    leverage=latest["leverage"],
-                    quota=latest["quota"],
-                    environment=latest.get("environment", "BINGX_VST"),
-                    execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
-                    direction_mode=latest.get("direction_mode", "SHORT"),
-                    exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
-                    universe_mode=u_mode,
-                    filled_count=latest["filled_count"],
-                    started_at=latest["started_at"]
-                )
+                self._hydrate_session_state(orch, latest)
 
         latest_db = db.get_latest_user_session(user_id)
+        cur_risk_budget = None
         if orch.current_session:
             sess_id = orch.current_session.session_id
             if margin_per_pos is not None:
@@ -534,16 +586,23 @@ class TenantSessionManager:
                 orch.current_session.quota = int(quota)
                 if orch.current_session.status == "EXHAUSTED" and orch.current_session.filled_count < orch.current_session.quota:
                     orch.current_session.status = "ACTIVE_SEARCHING"
+            if risk_budget_per_trade is not None:
+                orch.current_session.risk_budget_per_trade = float(risk_budget_per_trade)
             cur_status = orch.current_session.status
             cur_margin = orch.current_session.margin_per_pos
             cur_quota = orch.current_session.quota
             cur_filled = orch.current_session.filled_count
+            cur_risk_budget = orch.current_session.risk_budget_per_trade
         elif latest_db:
             sess_id = latest_db["session_id"]
             cur_status = latest_db["status"]
             cur_margin = float(margin_per_pos) if margin_per_pos is not None else latest_db["margin_per_pos"]
             cur_quota = int(quota) if quota is not None else latest_db["quota"]
             cur_filled = latest_db["filled_count"]
+            if risk_budget_per_trade is not None:
+                cur_risk_budget = float(risk_budget_per_trade)
+            else:
+                cur_risk_budget = latest_db.get("risk_budget_per_trade")
         else:
             return {"status": "NO_ACTIVE_SESSION", "message": "Tidak ada sesi aktif untuk diperbarui."}
 
@@ -553,7 +612,8 @@ class TenantSessionManager:
             quota=cur_quota,
             status=cur_status,
             auto_scan=auto_scan,
-            scan_interval=scan_interval
+            scan_interval=scan_interval,
+            risk_budget_per_trade=cur_risk_budget
         )
 
         res = {
@@ -563,6 +623,8 @@ class TenantSessionManager:
             "quota": cur_quota,
             "filled_count": cur_filled
         }
+        if cur_risk_budget is not None:
+            res["risk_budget_per_trade"] = cur_risk_budget
         if auto_scan is not None:
             res["auto_scan"] = auto_scan
         if scan_interval is not None:
@@ -632,23 +694,7 @@ class TenantSessionManager:
         if not orch.current_session:
             latest = db.get_latest_user_session(user_id)
             if latest and latest["status"] in ("ACTIVE_SEARCHING", "EXHAUSTED"):
-                u_mode = latest.get("mode", "PUMP_GAINERS")
-                orch.config.universe_mode = u_mode
-                # Restore session into orchestrator
-                orch.current_session = SessionState(
-                    session_id=latest["session_id"],
-                    status=latest["status"],
-                    margin_per_pos=latest["margin_per_pos"],
-                    leverage=latest["leverage"],
-                    quota=latest["quota"],
-                    environment=latest.get("environment", "BINGX_VST"),
-                    execution_mode=latest.get("execution_mode", "EXCHANGE_DEMO"),
-                    direction_mode=latest.get("direction_mode", "SHORT"),
-                    exit_policy=latest.get("exit_policy", "MANUAL_ONLY"),
-                    universe_mode=u_mode,
-                    filled_count=latest["filled_count"],
-                    started_at=latest["started_at"]
-                )
+                self._hydrate_session_state(orch, latest)
             else:
                 return {"status": "NO_ACTIVE_SESSION", "message": "Sesi belum dimulai. Tekan tombol Mulai Bot terlebih dahulu."}
 
@@ -745,7 +791,7 @@ class TenantSessionManager:
             h["tp_percent"] = tp_pct
             
             # Record order to DB if executed
-            if executed and order_id:
+            if executed and order_id and orch.current_session:
                 is_long_order = (ev.get("ai_decision") == "ENTER_LONG")
                 pos_side = "LONG" if is_long_order else "SHORT"
                 ord_side = "BUY" if is_long_order else "SELL"
@@ -759,7 +805,7 @@ class TenantSessionManager:
                     leverage=orch.current_session.leverage,
                     client_order_id=ev.get("client_order_id", ""),
                     order_id=str(order_id),
-                    status="FILLED",
+                    status=ev.get("status") or "SUBMITTED",
                     side=ord_side,
                     position_side=pos_side,
                     stop_loss_price=sl_price,
@@ -767,9 +813,15 @@ class TenantSessionManager:
                     effective_leverage=_resolve_effective_leverage(sizing, orch.current_session.leverage),
                     quote_ts=ev.get("quote_ts"),
                     request_price=ev.get("request_price") or ev.get("price", 0.0),
-                    avg_fill_price=ev.get("avg_fill_price") or ev.get("price", 0.0),
+                    avg_fill_price=ev.get("avg_fill_price"),
                     entry_fee=ev.get("fee", 0.0)
                 )
+
+            h["status"] = ev.get("status") or ("FILLED" if executed else "WAIT")
+            h["avg_fill_price"] = ev.get("avg_fill_price")
+            h["request_price"] = ev.get("request_price")
+            h["fill_provenance"] = ev.get("fill_provenance")
+            h["slippage"] = ev.get("slippage")
 
             humanized_evals.append(h)
 
