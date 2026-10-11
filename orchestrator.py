@@ -292,6 +292,8 @@ class SessionOrchestrator:
         deep_mode: bool,
         effective_dry_run: bool,
         is_local_paper: bool,
+        cycle_session_id: Optional[str] = None,
+        cycle_session_gen: Optional[str] = None
     ) -> tuple[Dict[str, Any], int, bool]:
         """Evaluates a single candidate and executes/dry-runs if signal is affirmative."""
         cand: CandidatePair = sc["cand"]
@@ -318,6 +320,8 @@ class SessionOrchestrator:
         with self._session_lock:
             if not self.current_session:
                 return {"executed": False, "veto_reason": "NO_ACTIVE_SESSION"}, 0, False
+            if cycle_session_id and (self.current_session.session_id != cycle_session_id or getattr(self.current_session, "generation_token", "") != cycle_session_gen):
+                return {"executed": False, "veto_reason": "SESSION_REPLACED_MID_CYCLE"}, 0, False
             session_id = self.current_session.session_id
             session_gen = getattr(self.current_session, "generation_token", "")
             session_dir = getattr(self.current_session, "direction_mode", "SHORT")
@@ -1329,7 +1333,16 @@ class SessionOrchestrator:
             "usage": triage_res.usage,
             "error_type": getattr(triage_res, "error_type", None),
             "attempts": getattr(triage_res, "attempts", 1),
-        }, session_id=self.current_session.session_id)
+        }, session_id=session_id)
+
+        with self._session_lock:
+            if (
+                not self.current_session
+                or self.current_session.session_id != session_id
+                or getattr(self.current_session, "generation_token", "") != cycle_gen
+            ):
+                AuditLogger.log_event("RUN_CYCLE_HALTED", {"reason": "session_replaced_during_triage"}, session_id=session_id)
+                return {"status": "SESSION_REPLACED_MID_CYCLE", "evaluations": []}
 
         candidate_map = {sc["cand"].symbol: sc for sc in screened_candidates}
         triage_map = {c.symbol: c for c in triage_res.ranked_candidates}
@@ -1485,7 +1498,9 @@ class SessionOrchestrator:
                     sc=sc,
                     deep_mode=True,
                     effective_dry_run=effective_dry_run,
-                    is_local_paper=is_local_paper
+                    is_local_paper=is_local_paper,
+                    cycle_session_id=session_id,
+                    cycle_session_gen=cycle_gen
                 )
                 cycle_results.append(rep)
                 cycle_tokens += tok
@@ -1538,7 +1553,9 @@ class SessionOrchestrator:
                     sc=sc,
                     deep_mode=True,  # Tier 2 structured dual-thesis evaluation for fallback finalists
                     effective_dry_run=effective_dry_run,
-                    is_local_paper=is_local_paper
+                    is_local_paper=is_local_paper,
+                    cycle_session_id=session_id,
+                    cycle_session_gen=cycle_gen
                 )
                 cycle_results.append(rep)
                 cycle_tokens += tok
