@@ -633,9 +633,11 @@ def test_f07_reconciliation_order_with_submitted_status(mocker):
 
 def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
     """
-    Acceptance Test: When entry order (side='SELL') occurs within <= 5000ms of exit_time,
-    the executedQty matching and fallback logic must reject it and strictly select the
-    closing side order (side='BUY' for SHORT) as closing_order.
+    Acceptance Test (Tugas Akhir 1):
+    When multiple open candidates exist (len(sym_candidates) > 1) and an entry order (side='SELL')
+    occurs within <= 5000ms of exit_time with identical executedQty (e.g. 250.0), the executedQty matching loop
+    must reject the entry order (side='SELL') and strictly select the closing side order (side='BUY' for SHORT).
+    Candidate with qty=250.0 is closed, while candidate with qty=100.0 remains open.
     """
     config = AppConfig(api_key="mock", secret_key="mock")
     orch = SessionOrchestrator(config)
@@ -643,22 +645,46 @@ def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
     session.status = "ACTIVE_SEARCHING"
     session.executed_symbols = ["NEAR-USDT"]
 
-    client_order_id = "cl_near_fast_close"
     t_exit_ms = 1700000003000
     t_entry_ms = t_exit_ms - 2000  # Entry happened 2 seconds before exit (e.g. emergency close)
 
+    # Candidate 1: qty=100.0
+    client_order_id_1 = "cl_near_order_100"
     db.record_trade_entry(
         user_id=1,
         session_id=session.session_id,
         symbol="NEAR-USDT",
         side="SELL",
         position_side="SHORT",
-        quantity=50.0,
+        quantity=100.0,
         price=5.0,
-        notional=250.0,
+        notional=500.0,
         effective_leverage=10,
-        client_order_id=client_order_id,
-        order_id="ord_near_entry",
+        client_order_id=client_order_id_1,
+        order_id="ord_near_entry_1",
+        status="FILLED",
+        stop_loss_price=5.20,
+        take_profit_price=4.50,
+        quote_ts=t_entry_ms - 1000,
+        request_price=5.0,
+        avg_fill_price=5.0,
+        entry_fee=0.0
+    )
+
+    # Candidate 2: qty=250.0 (the one that will close)
+    client_order_id_2 = "cl_near_order_250"
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="NEAR-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=250.0,
+        price=5.0,
+        notional=1250.0,
+        effective_leverage=10,
+        client_order_id=client_order_id_2,
+        order_id="ord_near_entry_2",
         status="FILLED",
         stop_loss_price=5.20,
         take_profit_price=4.50,
@@ -673,35 +699,35 @@ def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
             "incomeId": "inc_near_fast",
             "symbol": "NEAR-USDT",
             "incomeType": "REALIZED_PNL",
-            "income": "25.0",
+            "income": "125.0",
             "time": t_exit_ms
         }
     ]
 
-    # Two exchange orders within 5s window of exit:
-    # 1. Entry order: side='SELL', executedQty=50.0
-    # 2. Closing order: side='BUY', executedQty=50.0, avgPrice=4.50, type='TAKE_PROFIT_MARKET'
+    # Two exchange orders within 5s window of exit, BOTH with executedQty=250.0:
+    # 1. Entry order: side='SELL', executedQty=250.0 (must be rejected!)
+    # 2. Closing order: side='BUY', executedQty=250.0, avgPrice=4.50, type='TAKE_PROFIT_MARKET' (must be selected!)
     mock_orders = [
         {
-            "orderId": "ord_entry_wrong_pick",
+            "orderId": "ord_entry_wrong_pick_250",
             "symbol": "NEAR-USDT",
             "side": "SELL",
             "positionSide": "SHORT",
             "type": "MARKET",
             "status": "FILLED",
-            "executedQty": "50.0",
+            "executedQty": "250.0",
             "avgPrice": "5.0",
             "time": t_entry_ms,
             "updateTime": t_entry_ms
         },
         {
-            "orderId": "ord_close_correct_pick",
+            "orderId": "ord_close_correct_pick_250",
             "symbol": "NEAR-USDT",
             "side": "BUY",
             "positionSide": "SHORT",
             "type": "TAKE_PROFIT_MARKET",
             "status": "FILLED",
-            "executedQty": "50.0",
+            "executedQty": "250.0",
             "avgPrice": "4.50",
             "time": t_exit_ms,
             "updateTime": t_exit_ms
@@ -714,10 +740,20 @@ def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
     ok = orch.reconcile_outcomes()
     assert ok is True
 
-    attr = db.get_closed_trade_attribution(client_order_id)
-    assert attr is not None
-    # Must have matched ord_close_correct_pick (side=BUY), NOT ord_entry_wrong_pick (side=SELL)
-    assert attr["exit_reason"] == "TAKE_PROFIT"
-    assert attr["exit_price"] == pytest.approx(4.50)
+    attr_1 = db.get_closed_trade_attribution(client_order_id_1)
+    attr_2 = db.get_closed_trade_attribution(client_order_id_2)
+
+    assert attr_1 is not None
+    assert attr_2 is not None
+
+    # Candidate 1 (qty=100.0) remains OPEN
+    assert attr_1["exit_time"] is None
+
+    # Candidate 2 (qty=250.0) is matched and CLOSED via executedQty branch
+    assert attr_2["exit_time"] is not None
+    # Must have matched ord_close_correct_pick_250 (side=BUY), NOT ord_entry_wrong_pick_250 (side=SELL)
+    assert attr_2["exit_reason"] == "TAKE_PROFIT"
+    assert attr_2["exit_price"] == pytest.approx(4.50)
+    assert attr_2["realized_pnl"] == pytest.approx(125.0)
 
 
