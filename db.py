@@ -547,7 +547,7 @@ def get_open_orders_for_session(session_id: str) -> List[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT * FROM order_records
-            WHERE session_id = ? AND exit_time IS NULL AND status = 'FILLED'
+            WHERE session_id = ? AND exit_time IS NULL AND status IN ('FILLED', 'SUBMITTED', 'NEW', 'PARTIALLY_FILLED')
             ORDER BY id ASC
         """, (session_id,))
         return [dict(r) for r in cursor.fetchall()]

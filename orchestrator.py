@@ -201,7 +201,7 @@ class SessionOrchestrator:
         Tugas 4: Staged verification + Fail-Closed enforcement for attached TP/SL.
         Protocol:
         1. Stage 1: 1.0s propagation delay before initial poll to allow exchange to register conditional orders.
-        2. Stage 2: Verify resting orders matching positionSide, order type, and price within 2% tolerance.
+        2. Stage 2: Verify resting orders matching positionSide, order type, and price within 5% tolerance.
         3. Stage 3: Up to 2 retry attempts with 1.0s delay each if SL/TP is missing.
         4. Stage 4: If Stop Loss remains unconfirmed, trigger fail-closed emergency closure (with retry loop).
         Total window: ~3.5 - 4.0s.
@@ -227,10 +227,10 @@ class SessionOrchestrator:
                 o_stop = float(o.get("stopPrice") or o.get("price") or 0.0)
                 if o_type == "STOP_MARKET":
                     # Match price tolerance <= 5% to reject stale orders from past positions
-                    if sl_val is None or o_stop == 0.0 or abs(o_stop - sl_val) / max(sl_val, 1e-6) <= 0.05:
+                    if sl_val is None or (o_stop > 0.0 and abs(o_stop - sl_val) / max(sl_val, 1e-6) <= 0.05):
                         has_s = True
                 elif o_type == "TAKE_PROFIT_MARKET":
-                    if tp_val is None or o_stop == 0.0 or abs(o_stop - tp_val) / max(tp_val, 1e-6) <= 0.05:
+                    if tp_val is None or (o_stop > 0.0 and abs(o_stop - tp_val) / max(tp_val, 1e-6) <= 0.05):
                         has_t = True
             return has_s, has_t
 
@@ -384,7 +384,7 @@ class SessionOrchestrator:
             return True
 
         sorted_incomes = sorted(incomes, key=lambda x: int(x.get("time", 0)))
-        pnl_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "REALIZED_PNL"]
+        pnl_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType", "REALIZED_PNL") == "REALIZED_PNL"]
         fee_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "TRADING_FEE"]
         funding_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "FUNDING_FEE"]
 
@@ -414,12 +414,11 @@ class SessionOrchestrator:
             try:
                 # F-07: Wire closing trade recording to ledger on exchange fill
                 open_orders = db.get_open_orders_for_session(self.current_session.session_id)
+                open_sym_orders = [o for o in open_orders if o.get("symbol") == sym]
 
                 # Filter candidates for symbol entered before or at income timestamp (inc_time_ms)
                 sym_candidates = []
-                for o in open_orders:
-                    if o.get("symbol") != sym:
-                        continue
+                for o in open_sym_orders:
                     o_ts = int(o.get("quote_ts") or 0)
                     if o_ts == 0 and o.get("created_at"):
                         try:
@@ -450,10 +449,12 @@ class SessionOrchestrator:
                         for c_ord in potential_closing_orders:
                             c_qty = float(c_ord.get("executedQty") or c_ord.get("origQty") or 0.0)
                             c_pos_side = c_ord.get("positionSide")
+                            c_side = c_ord.get("side")
                             for cand in sym_candidates:
                                 cand_qty = float(cand.get("quantity") or 0.0)
-                                cand_pos_side = cand.get("position_side")
-                                if (not c_pos_side or cand_pos_side == c_pos_side) and c_qty > 0 and abs(cand_qty - c_qty) < 1e-4:
+                                cand_pos_side = cand.get("position_side", "SHORT")
+                                expected_close_side = "BUY" if (cand_pos_side or "SHORT") == "SHORT" else "SELL"
+                                if (not c_pos_side or cand_pos_side == c_pos_side) and c_side == expected_close_side and c_qty > 0 and abs(cand_qty - c_qty) < 1e-4:
                                     matched_trade = cand
                                     closing_order = c_ord
                                     break
@@ -463,6 +464,17 @@ class SessionOrchestrator:
                     # Fallback to FIFO (earliest by id / quote_ts)
                     if not matched_trade:
                         matched_trade = sym_candidates[0]
+
+                # If open orders exist in DB for this symbol but matching failed to find a valid candidate:
+                if open_sym_orders and not matched_trade:
+                    AuditLogger.log_event("INCOME_UNMATCHED_ORDER", {
+                        "symbol": sym,
+                        "income_id": inc_id,
+                        "open_orders_count": len(open_sym_orders),
+                        "inc_time_ms": inc_time_ms
+                    }, session_id=self.current_session.session_id)
+                    # Do NOT mark as processed; retry in next cycle so open order is not orphaned
+                    continue
 
                 # If closing order was not identified via qty match, find it for matched_trade
                 if matched_trade and not closing_order:
@@ -1484,7 +1496,8 @@ class SessionOrchestrator:
             return {
                 "status": "WATCHLIST_ACTIVE",
                 "message": "Watchlist evaluated; remaining slots occupied by resting orders or active positions.",
-                "cycle_results": cycle_results
+                "cycle_results": cycle_results,
+                "evaluations": cycle_results
             }
 
         current_dir = getattr(self.current_session, "direction_mode", "SHORT") if self.current_session else "SHORT"
@@ -1498,7 +1511,8 @@ class SessionOrchestrator:
             return {
                 "status": "NO_CANDIDATES" if not cycle_results else "WATCHLIST_EXECUTED",
                 "message": "No eligible unoccupied pairs found." if not cycle_results else "Watchlist processed.",
-                "cycle_results": cycle_results
+                "cycle_results": cycle_results,
+                "evaluations": cycle_results
             }
 
         # Collect screened candidates that pass hard gate
@@ -1620,7 +1634,8 @@ class SessionOrchestrator:
             return {
                 "status": "NO_CANDIDATES" if not cycle_results else "WATCHLIST_EXECUTED",
                 "message": "No candidates passed deterministic gates." if not cycle_results else "Watchlist processed.",
-                "cycle_results": cycle_results
+                "cycle_results": cycle_results,
+                "evaluations": cycle_results
             }
 
         # Step 2: Tier 1 Batch Triage via 9Router

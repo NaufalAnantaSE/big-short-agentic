@@ -555,3 +555,169 @@ def test_f07_income_not_marked_processed_on_db_error(mocker):
     assert attr["exit_time"] is not None
     assert attr["realized_pnl"] == pytest.approx(5.0)
 
+
+def test_f07_reconciliation_order_with_submitted_status(mocker):
+    """
+    Acceptance Test: An order recorded with status='SUBMITTED' (synchronous order submit before fill update)
+    must be recognized as an open order by get_open_orders_for_session and reconciled to status='CLOSED'.
+    """
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+    session.executed_symbols = ["SOL-USDT"]
+
+    client_order_id = "cl_sol_submitted_01"
+    entry_ts_ms = 1700000000000
+    exit_ts_ms = 1700000010000
+
+    # Entry recorded with status='SUBMITTED'
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="SOL-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=10.0,
+        price=150.0,
+        notional=1500.0,
+        effective_leverage=10,
+        client_order_id=client_order_id,
+        order_id="ord_sol_sub",
+        status="SUBMITTED",
+        stop_loss_price=155.0,
+        take_profit_price=140.0,
+        quote_ts=entry_ts_ms,
+        request_price=150.0,
+        avg_fill_price=150.0,
+        entry_fee=-0.10
+    )
+
+    mock_incomes = [
+        {
+            "incomeId": "inc_sol_sub",
+            "symbol": "SOL-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "100.0",
+            "time": exit_ts_ms
+        }
+    ]
+    mock_orders = [
+        {
+            "orderId": "ord_tp_sol",
+            "symbol": "SOL-USDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "TAKE_PROFIT_MARKET",
+            "status": "FILLED",
+            "avgPrice": "140.0",
+            "executedQty": "10.0",
+            "time": exit_ts_ms,
+            "updateTime": exit_ts_ms
+        }
+    ]
+
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=mock_orders)
+
+    ok = orch.reconcile_outcomes()
+    assert ok is True
+
+    attr = db.get_closed_trade_attribution(client_order_id)
+    assert attr is not None
+    assert attr["exit_time"] is not None
+    assert attr["exit_reason"] == "TAKE_PROFIT"
+    assert attr["exit_price"] == pytest.approx(140.0)
+    assert "inc_sol_sub" in session.processed_income_ids
+
+
+def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
+    """
+    Acceptance Test: When entry order (side='SELL') occurs within <= 5000ms of exit_time,
+    the executedQty matching and fallback logic must reject it and strictly select the
+    closing side order (side='BUY' for SHORT) as closing_order.
+    """
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+    session.executed_symbols = ["NEAR-USDT"]
+
+    client_order_id = "cl_near_fast_close"
+    t_exit_ms = 1700000003000
+    t_entry_ms = t_exit_ms - 2000  # Entry happened 2 seconds before exit (e.g. emergency close)
+
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="NEAR-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=50.0,
+        price=5.0,
+        notional=250.0,
+        effective_leverage=10,
+        client_order_id=client_order_id,
+        order_id="ord_near_entry",
+        status="FILLED",
+        stop_loss_price=5.20,
+        take_profit_price=4.50,
+        quote_ts=t_entry_ms,
+        request_price=5.0,
+        avg_fill_price=5.0,
+        entry_fee=0.0
+    )
+
+    mock_incomes = [
+        {
+            "incomeId": "inc_near_fast",
+            "symbol": "NEAR-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "25.0",
+            "time": t_exit_ms
+        }
+    ]
+
+    # Two exchange orders within 5s window of exit:
+    # 1. Entry order: side='SELL', executedQty=50.0
+    # 2. Closing order: side='BUY', executedQty=50.0, avgPrice=4.50, type='TAKE_PROFIT_MARKET'
+    mock_orders = [
+        {
+            "orderId": "ord_entry_wrong_pick",
+            "symbol": "NEAR-USDT",
+            "side": "SELL",
+            "positionSide": "SHORT",
+            "type": "MARKET",
+            "status": "FILLED",
+            "executedQty": "50.0",
+            "avgPrice": "5.0",
+            "time": t_entry_ms,
+            "updateTime": t_entry_ms
+        },
+        {
+            "orderId": "ord_close_correct_pick",
+            "symbol": "NEAR-USDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "TAKE_PROFIT_MARKET",
+            "status": "FILLED",
+            "executedQty": "50.0",
+            "avgPrice": "4.50",
+            "time": t_exit_ms,
+            "updateTime": t_exit_ms
+        }
+    ]
+
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=mock_orders)
+
+    ok = orch.reconcile_outcomes()
+    assert ok is True
+
+    attr = db.get_closed_trade_attribution(client_order_id)
+    assert attr is not None
+    # Must have matched ord_close_correct_pick (side=BUY), NOT ord_entry_wrong_pick (side=SELL)
+    assert attr["exit_reason"] == "TAKE_PROFIT"
+    assert attr["exit_price"] == pytest.approx(4.50)
+
+

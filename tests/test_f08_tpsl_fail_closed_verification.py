@@ -338,3 +338,64 @@ def test_tpsl_fail_closed_emergency_close_retry_on_initial_failure(mocker):
     # Emergency close retried and succeeded on attempt 2
     assert mock_close.call_count == 2
 
+
+def test_tpsl_verification_rejects_zero_stop_price(mocker):
+    """
+    Acceptance Test: If exchange returns a STOP_MARKET order with stopPrice=0.0 (or missing/zero),
+    it must be rejected as an unconfigured/invalid Stop Loss.
+    Retry must be triggered to place a valid Stop Loss with correct positive stop price.
+    """
+    mocker.patch("orchestrator.time.sleep")
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=10, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+
+    sc = _build_test_candidate("PEPE-USDT", 10.0)
+    mocker.patch("orchestrator._evaluate_hard_gate", return_value=(True, []))
+    mocker.patch.object(orch.ai, "evaluate_candidate", return_value=DummyAIResponse("ENTER_SHORT"))
+    mocker.patch.object(orch.client, "set_leverage", return_value={"leverage": 10})
+    mocker.patch.object(orch.client, "place_order", return_value={
+        "orderId": "ord_entry_zero_sl_06",
+        "status": "FILLED",
+        "avgPrice": 10.0
+    })
+    mocker.patch.object(orch.client, "get_depth", return_value={
+        "bids": [["9.99", "100"]],
+        "asks": [["10.01", "100"]],
+        "T": int(time.time() * 1000)
+    })
+
+    # Initial check: Has STOP_MARKET with stopPrice=0.0 (invalid!) and valid TP
+    zero_sl_orders = [
+        {"orderId": "sl_zero", "positionSide": "SHORT", "type": "STOP_MARKET", "stopPrice": 0.0},
+        {"orderId": "tp_ok", "positionSide": "SHORT", "type": "TAKE_PROFIT_MARKET", "stopPrice": 8.8}
+    ]
+    # Check after retry: Has correct positive stopPrice 10.6
+    valid_sl_orders = [
+        {"orderId": "sl_valid", "positionSide": "SHORT", "type": "STOP_MARKET", "stopPrice": 10.6},
+        {"orderId": "tp_ok", "positionSide": "SHORT", "type": "TAKE_PROFIT_MARKET", "stopPrice": 8.8}
+    ]
+    mocker.patch.object(orch.client, "get_open_orders", side_effect=[zero_sl_orders, valid_sl_orders])
+    mock_retry = mocker.patch.object(orch.client, "place_tpsl_order", return_value={"orderId": "retry_ok"})
+    mock_close = mocker.patch.object(orch.client, "close_position")
+
+    rep, tokens, placed = orch._evaluate_and_execute_candidate(
+        sc=sc,
+        deep_mode=False,
+        effective_dry_run=False,
+        is_local_paper=False,
+        cycle_session_id=session.session_id,
+        cycle_session_gen=getattr(session, "generation_token", "")
+    )
+
+    assert placed is True
+    # Stop loss with 0.0 was rejected, triggering place_tpsl_order
+    assert mock_retry.call_count >= 1
+    args, kwargs = mock_retry.call_args
+    assert kwargs.get("trigger_type") == "STOP_MARKET"
+    assert kwargs.get("stop_price") == pytest.approx(10.6, 0.01)
+    assert rep.get("tpsl_verified") is True
+    mock_close.assert_not_called()
+
+
