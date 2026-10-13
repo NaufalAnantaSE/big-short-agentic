@@ -511,15 +511,16 @@ def record_trade_entry(
 
 def record_trade_exit(
     client_order_id: str,
-    exit_price: float,
-    exit_reason: str,
+    exit_price: Optional[float] = None,
+    exit_reason: str = "UNKNOWN",
     exit_fee: float = 0.0,
     funding_fee: float = 0.0,
     realized_pnl: Optional[float] = None,
-    realized_r: Optional[float] = None
+    realized_r: Optional[float] = None,
+    exit_time: Optional[str] = None
 ):
-    """P1-4: Records trade exit fill, reason, fees, and realized R in the ledger."""
-    now = datetime.now(timezone.utc).isoformat()
+    """P1-4 / F-07: Records trade exit fill, reason, fees, and realized R in the ledger."""
+    timestamp_str = exit_time or datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -532,12 +533,24 @@ def record_trade_exit(
             funding_fee = ?,
             realized_pnl = ?,
             realized_r = ?
-        WHERE client_order_id = ? OR order_id = ?
+        WHERE (client_order_id = ? OR order_id = ?) AND exit_time IS NULL
         """, (
-            exit_price, now, exit_reason, exit_fee, funding_fee,
+            exit_price, timestamp_str, exit_reason, exit_fee, funding_fee,
             realized_pnl or 0.0, realized_r or 0.0, client_order_id, client_order_id
         ))
         conn.commit()
+
+
+def get_open_orders_for_session(session_id: str) -> List[Dict[str, Any]]:
+    """F-07: Retrieves open (unclosed) orders for a session from the ledger."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM order_records
+            WHERE session_id = ? AND exit_time IS NULL AND status = 'FILLED'
+            ORDER BY id ASC
+        """, (session_id,))
+        return [dict(r) for r in cursor.fetchall()]
 
 
 def get_closed_trade_attribution(order_identifier: str) -> Optional[Dict[str, Any]]:

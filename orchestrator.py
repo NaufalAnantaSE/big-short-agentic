@@ -225,7 +225,6 @@ class SessionOrchestrator:
         start_ts = int(self.current_session.started_at * 1000) if self.current_session.started_at > 0 else None
         try:
             incomes = self.client.get_income(
-                income_type="REALIZED_PNL",
                 start_time=start_ts
             )
         except Exception as e:
@@ -236,9 +235,14 @@ class SessionOrchestrator:
             return True
 
         sorted_incomes = sorted(incomes, key=lambda x: int(x.get("time", 0)))
-        for inc in sorted_incomes:
-            if not isinstance(inc, dict):
-                continue
+        pnl_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "REALIZED_PNL"]
+        fee_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "TRADING_FEE"]
+        funding_incomes = [i for i in sorted_incomes if isinstance(i, dict) and i.get("incomeType") == "FUNDING_FEE"]
+
+        # Cache of exchange orders per symbol to avoid repeated API requests
+        exchange_orders_cache: Dict[str, list] = {}
+
+        for inc in pnl_incomes:
             inc_id = str(inc.get("incomeId") or inc.get("tradeId") or inc.get("tranId") or inc.get("time") or "")
             if not inc_id or inc_id in self.current_session.processed_income_ids:
                 continue
@@ -254,20 +258,105 @@ class SessionOrchestrator:
                 inc_date = today_str
 
             self.current_session.processed_income_ids.append(inc_id)
-            if inc_date != today_str:
-                continue
 
             try:
-                val = float(inc.get("income", 0.0))
+                gross_val = float(inc.get("income", 0.0))
             except (ValueError, TypeError):
                 continue
 
-            self.record_trade_outcome(symbol=sym, realized_pnl=val)
+            # F-07: Wire closing trade recording to ledger on exchange fill
+            open_orders = db.get_open_orders_for_session(self.current_session.session_id)
+            matched_trade = next((o for o in open_orders if o.get("symbol") == sym), None)
+
+            if matched_trade:
+                entry_time_ms = int(matched_trade.get("quote_ts") or 0)
+                exit_time_iso = datetime.fromtimestamp(inc_time_ms / 1000.0, tz=timezone.utc).isoformat() if inc_time_ms > 0 else datetime.now(timezone.utc).isoformat()
+
+                # Match exit fee
+                match_fee_obj = next((f for f in fee_incomes if f.get("symbol") == sym and abs(int(f.get("time", 0)) - inc_time_ms) <= 2000), None)
+                exit_fee = float(match_fee_obj.get("income", 0.0)) if match_fee_obj else 0.0
+
+                # Match accrued funding fees during holding period
+                trade_funding = sum(float(f.get("income", 0.0)) for f in funding_incomes if f.get("symbol") == sym and entry_time_ms <= int(f.get("time", 0)) <= inc_time_ms)
+                entry_fee = float(matched_trade.get("entry_fee", 0.0) or 0.0)
+                net_pnl = gross_val + entry_fee + exit_fee + trade_funding
+
+                # Determine exit price & exit reason from exchange orders (fail-open to None/UNKNOWN, no fabrication)
+                exit_price = None
+                exit_reason = "UNKNOWN"
+                if sym not in exchange_orders_cache:
+                    try:
+                        exchange_orders_cache[sym] = self.client.get_all_orders(sym)
+                    except Exception:
+                        exchange_orders_cache[sym] = []
+                sym_orders = exchange_orders_cache[sym]
+
+                pos_side = matched_trade.get("position_side", "SHORT")
+                closing_side = "BUY" if pos_side == "SHORT" else "SELL"
+                closing_order = next((
+                    o for o in sym_orders
+                    if o.get("positionSide") == pos_side
+                    and o.get("side") == closing_side
+                    and o.get("status") == "FILLED"
+                    and (abs(int(o.get("time", 0)) - inc_time_ms) <= 5000 or abs(int(o.get("updateTime", 0)) - inc_time_ms) <= 5000)
+                ), None)
+
+                if closing_order:
+                    raw_exit_avg = closing_order.get("avgPrice") or closing_order.get("price")
+                    if raw_exit_avg is not None and float(raw_exit_avg) > 0:
+                        exit_price = float(raw_exit_avg)
+                    o_type = closing_order.get("type", "")
+                    if o_type == "TAKE_PROFIT_MARKET":
+                        exit_reason = "TAKE_PROFIT"
+                    elif o_type == "STOP_MARKET":
+                        exit_reason = "STOP_LOSS"
+                    elif o_type == "MARKET":
+                        exit_reason = "MARKET_CLOSE_PROFIT" if gross_val > 0 else "MARKET_CLOSE_LOSS"
+                    elif o_type:
+                        exit_reason = o_type
+
+                # Calculate realized R
+                entry_fill_price = float(matched_trade.get("avg_fill_price") or matched_trade.get("price") or 0.0)
+                sl_price = float(matched_trade.get("stop_loss_price") or 0.0)
+                qty = float(matched_trade.get("quantity") or 0.0)
+                risk_1r = abs(entry_fill_price - sl_price) * qty if (sl_price > 0 and entry_fill_price > 0 and qty > 0) else 0.0
+                realized_r = round(net_pnl / risk_1r, 4) if risk_1r > 0 else 0.0
+
+                # Persist exit to database ledger
+                db.record_trade_exit(
+                    client_order_id=matched_trade["client_order_id"],
+                    exit_price=exit_price,
+                    exit_reason=exit_reason,
+                    exit_fee=exit_fee,
+                    funding_fee=trade_funding,
+                    realized_pnl=net_pnl,
+                    realized_r=realized_r,
+                    exit_time=exit_time_iso
+                )
+
+                AuditLogger.log_event("POSITION_CLOSED", {
+                    "symbol": sym,
+                    "client_order_id": matched_trade["client_order_id"],
+                    "order_id": matched_trade.get("order_id"),
+                    "exit_price": exit_price,
+                    "exit_reason": exit_reason,
+                    "exit_time": exit_time_iso,
+                    "gross_pnl": gross_val,
+                    "exit_fee": exit_fee,
+                    "funding_fee": trade_funding,
+                    "net_pnl": net_pnl,
+                    "realized_r": realized_r
+                }, session_id=self.current_session.session_id)
+
+            if inc_date != today_str:
+                continue
+
+            self.record_trade_outcome(symbol=sym, realized_pnl=gross_val)
 
             AuditLogger.log_event("TRADE_OUTCOME_INGESTED", {
                 "symbol": sym,
                 "income_id": inc_id,
-                "realized_pnl": val,
+                "realized_pnl": gross_val,
                 "session_daily_pnl": self.current_session.daily_realized_pnl,
                 "consecutive_losses": self.current_session.consecutive_losses
             }, session_id=self.current_session.session_id)
