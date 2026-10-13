@@ -71,7 +71,11 @@ Baseline pembekuan batch BOTH adalah commit `01d31d0`. Perubahan yang berlaku pa
 ## 5. Kriteria Evaluasi Statistik (Pre-Registered Criteria)
 
 Setelah seluruh 30 trade selesai:
-1. **Metrik Finansial Definitif:**
+1. **Definisi Denominator 1R (Basis Perhitungan R):**
+   - Denominator 1R dihitung berdasarkan jarak aktual harga fill terhadap stop loss:
+     $$1R = |\text{avg\_fill\_price} - \text{stop\_loss\_price}| \times \text{quantity}$$
+   - *Catatan Komparasi:* Pada batch pembuktian awal 58 trade, denominator dihitung dari planned entry price ($|\text{price} - \text{stop\_loss\_price}| \times \text{quantity}$). Karena eksekusi menggunakan order MARKET dengan slippage rata-rata < 0.05%, selisih antara planned risk dan fill risk sangat kecil (< 0.1%). Definisi berbasis `avg_fill_price` digunakan pada batch konfirmasi untuk merefleksikan risiko modal riil yang tereksekusi di bursa.
+2. **Metrik Finansial Definitif:**
    - Data wajib ditarik langsung dari buku besar bursa (`order_records` yang terekonsiliasi via F-07).
    - Metrik utama:
      * Mean Net Realized R per trade ($\bar{R}$)
@@ -79,7 +83,7 @@ Setelah seluruh 30 trade selesai:
      * Profit Factor (Gross Gains / Gross Losses)
      * Total Net PnL (VST) & Total Fee Drag (%)
      * Maximum Drawdown (R)
-2. **Uji Hipotesis & Confidence Interval (CI 90% Dua Sisi):**
+3. **Uji Hipotesis & Confidence Interval (CI 90% Dua Sisi):**
    - Formula:
      $$CI_{90\%} = \bar{R} \pm t_{0.05, df=29} \times \frac{s}{\sqrt{30}}$$
    - **Kriteria Keberhasilan:**

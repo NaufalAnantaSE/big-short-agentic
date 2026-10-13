@@ -10,6 +10,7 @@ Verifies:
 6. Unknown data remains unknown: If exchange order history lacks closing order, exit_price is None and exit_reason is 'UNKNOWN' (no fabrication).
 """
 import time
+import uuid
 from datetime import datetime, timezone
 import pytest
 
@@ -19,7 +20,9 @@ import db
 
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def setup_db(tmp_path, monkeypatch):
+    test_db = str(tmp_path / f"test_{uuid.uuid4().hex}.db")
+    monkeypatch.setattr(db, "DB_PATH", test_db)
     db.init_db()
 
 
@@ -274,3 +277,281 @@ def test_e2e_production_exit_unknown_no_fabrication(mocker):
     assert attr["exit_price"] is None  # Strictly None, NOT fallback to entry price
     assert attr["exit_reason"] == "UNKNOWN"
     assert attr["realized_pnl"] == pytest.approx(20.0)
+
+
+def test_f07_reconciliation_fifo_multiple_orders_same_symbol(mocker):
+    """
+    Test 1: Multiple orders on same symbol with different timestamps.
+    Income at T_close_1 must match Order 1 (quote_ts <= T_close_1).
+    Order 2 (quote_ts > T_close_1) MUST NOT be attributed to the earlier exit.
+    """
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+    session.executed_symbols = ["PEPE-USDT"]
+
+    t1_ms = 1700000010000
+    t_exit1_ms = 1700000020000
+    t2_ms = 1700000030000
+    t_exit2_ms = 1700000040000
+
+    # Order 1 entered at t1
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="PEPE-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=100.0,
+        price=10.0,
+        notional=1000.0,
+        effective_leverage=10,
+        client_order_id="cl_pepe_order_1",
+        order_id="ord_p1",
+        status="FILLED",
+        stop_loss_price=10.5,
+        take_profit_price=9.0,
+        quote_ts=t1_ms,
+        request_price=10.0,
+        avg_fill_price=10.0,
+        entry_fee=0.0
+    )
+
+    # Order 2 entered later at t2 (re-entry)
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="PEPE-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=100.0,
+        price=10.0,
+        notional=1000.0,
+        effective_leverage=10,
+        client_order_id="cl_pepe_order_2",
+        order_id="ord_p2",
+        status="FILLED",
+        stop_loss_price=10.5,
+        take_profit_price=9.0,
+        quote_ts=t2_ms,
+        request_price=10.0,
+        avg_fill_price=10.0,
+        entry_fee=0.0
+    )
+
+    # First income arrives for exit 1 at t_exit1 (between t1 and t2)
+    mock_incomes_1 = [
+        {
+            "incomeId": "inc_pepe_1",
+            "symbol": "PEPE-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "50.0",
+            "time": t_exit1_ms
+        }
+    ]
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes_1)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=[])
+
+    orch.reconcile_outcomes()
+
+    # Order 1 must be closed, Order 2 MUST remain open!
+    attr_1 = db.get_closed_trade_attribution("cl_pepe_order_1")
+    attr_2 = db.get_closed_trade_attribution("cl_pepe_order_2")
+
+    assert attr_1 is not None
+    assert attr_1["exit_time"] is not None
+    assert attr_1["realized_pnl"] == pytest.approx(50.0)
+
+    assert attr_2 is not None
+    assert attr_2["exit_time"] is None  # Still OPEN!
+
+    # Second income arrives for exit 2 at t_exit2
+    mock_incomes_2 = [
+        mock_incomes_1[0],
+        {
+            "incomeId": "inc_pepe_2",
+            "symbol": "PEPE-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "80.0",
+            "time": t_exit2_ms
+        }
+    ]
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes_2)
+    orch.reconcile_outcomes()
+
+    attr_2_after = db.get_closed_trade_attribution("cl_pepe_order_2")
+    assert attr_2_after is not None
+    assert attr_2_after["exit_time"] is not None
+    assert attr_2_after["realized_pnl"] == pytest.approx(80.0)
+
+
+def test_f07_reconciliation_qty_match_multiple_orders(mocker):
+    """
+    Test 2: Multiple open orders with different quantities.
+    Closing fill with executedQty = 250 must match the order with quantity = 250,
+    even if another order was opened earlier.
+    """
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+    session.executed_symbols = ["W-USDT"]
+
+    t0_ms = 1700000000000
+    exit_ms = 1700000010000
+
+    # Order A entered first with qty 100.0
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="W-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=100.0,
+        price=1.0,
+        notional=100.0,
+        effective_leverage=10,
+        client_order_id="cl_w_qty100",
+        order_id="ord_w1",
+        status="FILLED",
+        stop_loss_price=1.05,
+        take_profit_price=0.90,
+        quote_ts=t0_ms,
+        request_price=1.0,
+        avg_fill_price=1.0,
+        entry_fee=0.0
+    )
+
+    # Order B entered second with qty 250.0
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="W-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=250.0,
+        price=1.0,
+        notional=250.0,
+        effective_leverage=10,
+        client_order_id="cl_w_qty250",
+        order_id="ord_w2",
+        status="FILLED",
+        stop_loss_price=1.05,
+        take_profit_price=0.90,
+        quote_ts=t0_ms + 1000,
+        request_price=1.0,
+        avg_fill_price=1.0,
+        entry_fee=0.0
+    )
+
+    mock_incomes = [
+        {
+            "incomeId": "inc_w_250",
+            "symbol": "W-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "25.0",
+            "time": exit_ms
+        }
+    ]
+
+    mock_orders = [
+        {
+            "orderId": "ord_close_w2",
+            "symbol": "W-USDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "TAKE_PROFIT_MARKET",
+            "status": "FILLED",
+            "executedQty": "250.0",
+            "avgPrice": "0.90",
+            "time": exit_ms,
+            "updateTime": exit_ms
+        }
+    ]
+
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=mock_orders)
+
+    orch.reconcile_outcomes()
+
+    # Order B (250 qty) must be matched and closed; Order A (100 qty) must remain open!
+    attr_a = db.get_closed_trade_attribution("cl_w_qty100")
+    attr_b = db.get_closed_trade_attribution("cl_w_qty250")
+
+    assert attr_a is not None
+    assert attr_b is not None
+    assert attr_a["exit_time"] is None  # Remains open
+    assert attr_b["exit_time"] is not None  # Successfully closed
+    assert attr_b["realized_pnl"] == pytest.approx(25.0)
+
+
+def test_f07_income_not_marked_processed_on_db_error(mocker):
+    """
+    Test 3: If database write throws an exception, incomeId is NOT marked processed,
+    guaranteeing that the exit is not permanently lost and will be retried.
+    """
+    import sqlite3
+    config = AppConfig(api_key="mock", secret_key="mock")
+    orch = SessionOrchestrator(config)
+    session = orch.start_session(margin_per_pos=5.0, leverage=20, quota=2)
+    session.status = "ACTIVE_SEARCHING"
+    session.executed_symbols = ["DOGE-USDT"]
+
+    client_order_id = "cl_doge_retry_db"
+    db.record_trade_entry(
+        user_id=1,
+        session_id=session.session_id,
+        symbol="DOGE-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity=50.0,
+        price=0.20,
+        notional=10.0,
+        effective_leverage=10,
+        client_order_id=client_order_id,
+        order_id="ord_doge_err",
+        status="FILLED",
+        stop_loss_price=0.21,
+        take_profit_price=0.18,
+        quote_ts=1700000000000,
+        request_price=0.20,
+        avg_fill_price=0.20,
+        entry_fee=0.0
+    )
+
+    mock_incomes = [
+        {
+            "incomeId": "inc_doge_err_1",
+            "symbol": "DOGE-USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "5.0",
+            "time": 1700000010000
+        }
+    ]
+
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=[])
+
+    # First attempt: Simulate database failure on record_trade_exit
+    mocker.patch("db.record_trade_exit", side_effect=sqlite3.OperationalError("database is locked"))
+
+    orch.reconcile_outcomes()
+
+    # CRITICAL: inc_doge_err_1 MUST NOT be in processed_income_ids
+    assert "inc_doge_err_1" not in session.processed_income_ids
+
+    # Second attempt: Database succeeds
+    mocker.stopall()
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", return_value=[])
+
+    orch.reconcile_outcomes()
+
+    # Now it must be marked processed and record in DB must be closed
+    assert "inc_doge_err_1" in session.processed_income_ids
+    attr = db.get_closed_trade_attribution(client_order_id)
+    assert attr is not None
+    assert attr["exit_time"] is not None
+    assert attr["realized_pnl"] == pytest.approx(5.0)
+

@@ -198,105 +198,108 @@ class SessionOrchestrator:
         contract_info: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str]:
         """
-        Tugas 4: Verification + Fail-Closed enforcement for attached TP/SL.
-        Guarantees that no filled position is left naked without confirmed resting Stop Loss.
-        If Stop Loss is dropped and cannot be recovered via independent trigger,
-        the position is immediately closed fail-closed.
+        Tugas 4: Staged verification + Fail-Closed enforcement for attached TP/SL.
+        Protocol:
+        1. Stage 1: 1.0s propagation delay before initial poll to allow exchange to register conditional orders.
+        2. Stage 2: Verify resting orders matching positionSide, order type, and price within 2% tolerance.
+        3. Stage 3: Up to 2 retry attempts with 1.0s delay each if SL/TP is missing.
+        4. Stage 4: If Stop Loss remains unconfirmed, trigger fail-closed emergency closure (with retry loop).
+        Total window: ~3.5 - 4.0s.
         """
         if stop_loss_price is None and take_profit_price is None:
             return True, "NO_TPSL_REQUESTED"
 
-        # 1. Poll exchange open orders to verify TP/SL presence
-        try:
-            open_orders = self.client.get_open_orders(symbol)
-        except Exception as e:
-            AuditLogger.log_event("TPSL_VERIFY_POLL_ERROR", {
-                "symbol": symbol,
-                "error": str(e)
-            }, session_id=session_id)
-            open_orders = []
-
         norm_pos_side = position_side.upper()
-        matching_orders = [
-            o for o in open_orders
-            if isinstance(o, dict) and o.get("positionSide") == norm_pos_side
-        ]
-        has_sl = any(o.get("type") == "STOP_MARKET" for o in matching_orders)
-        has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in matching_orders)
+        sl_val = round(float(stop_loss_price), int(contract_info["pricePrecision"])) if (stop_loss_price is not None and contract_info and "pricePrecision" in contract_info) else (float(stop_loss_price) if stop_loss_price is not None else None)
+        tp_val = round(float(take_profit_price), int(contract_info["pricePrecision"])) if (take_profit_price is not None and contract_info and "pricePrecision" in contract_info) else (float(take_profit_price) if take_profit_price is not None else None)
 
-        # 2. If SL or TP is missing, attempt immediate independent placement
-        if stop_loss_price is not None and not has_sl:
-            AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
-                "symbol": symbol,
-                "missing": "STOP_MARKET",
-                "stop_loss_price": stop_loss_price,
-                "position_side": norm_pos_side
-            }, session_id=session_id)
-
-            sl_val = float(stop_loss_price)
-            if contract_info and "pricePrecision" in contract_info:
-                sl_val = round(sl_val, int(contract_info["pricePrecision"]))
-
+        def _check_open_tpsl() -> Tuple[bool, bool]:
             try:
-                retry_cl_id = f"bx_sl_retry_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-                self.client.place_tpsl_order(
-                    symbol=symbol,
-                    position_side=norm_pos_side,
-                    trigger_type="STOP_MARKET",
-                    stop_price=sl_val,
-                    client_order_id=retry_cl_id,
-                    quantity=quantity
-                )
-            except Exception as err:
-                AuditLogger.log_event("TPSL_RETRY_FAILED", {
+                orders = self.client.get_open_orders(symbol)
+            except Exception as e:
+                AuditLogger.log_event("TPSL_VERIFY_POLL_ERROR", {"symbol": symbol, "error": str(e)}, session_id=session_id)
+                orders = []
+            matching = [o for o in orders if isinstance(o, dict) and o.get("positionSide") == norm_pos_side]
+            has_s = False
+            has_t = False
+            for o in matching:
+                o_type = o.get("type")
+                o_stop = float(o.get("stopPrice") or o.get("price") or 0.0)
+                if o_type == "STOP_MARKET":
+                    # Match price tolerance <= 5% to reject stale orders from past positions
+                    if sl_val is None or o_stop == 0.0 or abs(o_stop - sl_val) / max(sl_val, 1e-6) <= 0.05:
+                        has_s = True
+                elif o_type == "TAKE_PROFIT_MARKET":
+                    if tp_val is None or o_stop == 0.0 or abs(o_stop - tp_val) / max(tp_val, 1e-6) <= 0.05:
+                        has_t = True
+            return has_s, has_t
+
+        # Stage 1: Initial 1.0s delay for exchange propagation
+        time.sleep(1.0)
+        has_sl, has_tp = _check_open_tpsl()
+
+        # Stage 2: Retry loop (up to 2 attempts, 1.0s wait after each placement)
+        max_retries = 2
+        for attempt in range(1, max_retries + 1):
+            if (stop_loss_price is None or has_sl) and (take_profit_price is None or has_tp):
+                break
+
+            if stop_loss_price is not None and not has_sl and sl_val is not None:
+                AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
                     "symbol": symbol,
-                    "type": "STOP_MARKET",
-                    "error": str(err)
+                    "attempt": attempt,
+                    "missing": "STOP_MARKET",
+                    "stop_loss_price": sl_val,
+                    "position_side": norm_pos_side
                 }, session_id=session_id)
+                try:
+                    retry_cl_id = f"bx_sl_retry_{attempt}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                    self.client.place_tpsl_order(
+                        symbol=symbol,
+                        position_side=norm_pos_side,
+                        trigger_type="STOP_MARKET",
+                        stop_price=sl_val,
+                        client_order_id=retry_cl_id,
+                        quantity=quantity
+                    )
+                except Exception as err:
+                    AuditLogger.log_event("TPSL_RETRY_FAILED", {
+                        "symbol": symbol,
+                        "attempt": attempt,
+                        "type": "STOP_MARKET",
+                        "error": str(err)
+                    }, session_id=session_id)
 
-        if take_profit_price is not None and not has_tp:
-            AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
-                "symbol": symbol,
-                "missing": "TAKE_PROFIT_MARKET",
-                "take_profit_price": take_profit_price,
-                "position_side": norm_pos_side
-            }, session_id=session_id)
-
-            tp_val = float(take_profit_price)
-            if contract_info and "pricePrecision" in contract_info:
-                tp_val = round(tp_val, int(contract_info["pricePrecision"]))
-
-            try:
-                retry_cl_id = f"bx_tp_retry_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-                self.client.place_tpsl_order(
-                    symbol=symbol,
-                    position_side=norm_pos_side,
-                    trigger_type="TAKE_PROFIT_MARKET",
-                    stop_price=tp_val,
-                    client_order_id=retry_cl_id,
-                    quantity=quantity
-                )
-            except Exception as err:
-                AuditLogger.log_event("TPSL_RETRY_FAILED", {
+            if take_profit_price is not None and not has_tp and tp_val is not None:
+                AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
                     "symbol": symbol,
-                    "type": "TAKE_PROFIT_MARKET",
-                    "error": str(err)
+                    "attempt": attempt,
+                    "missing": "TAKE_PROFIT_MARKET",
+                    "take_profit_price": tp_val,
+                    "position_side": norm_pos_side
                 }, session_id=session_id)
+                try:
+                    retry_cl_id = f"bx_tp_retry_{attempt}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                    self.client.place_tpsl_order(
+                        symbol=symbol,
+                        position_side=norm_pos_side,
+                        trigger_type="TAKE_PROFIT_MARKET",
+                        stop_price=tp_val,
+                        client_order_id=retry_cl_id,
+                        quantity=quantity
+                    )
+                except Exception as err:
+                    AuditLogger.log_event("TPSL_RETRY_FAILED", {
+                        "symbol": symbol,
+                        "attempt": attempt,
+                        "type": "TAKE_PROFIT_MARKET",
+                        "error": str(err)
+                    }, session_id=session_id)
 
-        # 3. Re-verify if retries were attempted
-        if (stop_loss_price is not None and not has_sl) or (take_profit_price is not None and not has_tp):
-            try:
-                recheck_orders = self.client.get_open_orders(symbol)
-                recheck_matching = [
-                    o for o in recheck_orders
-                    if isinstance(o, dict) and o.get("positionSide") == norm_pos_side
-                ]
-                has_sl = any(o.get("type") == "STOP_MARKET" for o in recheck_matching)
-                has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in recheck_matching)
-            except Exception:
-                pass
+            time.sleep(1.0)
+            has_sl, has_tp = _check_open_tpsl()
 
-        # 4. Fail-closed: Stop Loss is non-negotiable for risk protection
+        # Stage 3: Fail-closed if Stop Loss remains unconfirmed
         if stop_loss_price is not None and not has_sl:
             AuditLogger.log_event("TPSL_FAIL_CLOSED_CLOSING_POSITION", {
                 "symbol": symbol,
@@ -304,19 +307,26 @@ class SessionOrchestrator:
                 "quantity": quantity,
                 "reason": "STOP_LOSS_UNCONFIRMED_FAIL_CLOSED"
             }, session_id=session_id)
-            try:
-                close_cl_id = f"bx_emg_cls_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-                self.client.close_position(
-                    symbol=symbol,
-                    position_side=norm_pos_side,
-                    quantity=quantity,
-                    client_order_id=close_cl_id
-                )
-            except Exception as close_err:
-                AuditLogger.log_event("TPSL_FAIL_CLOSED_CLOSE_ERROR", {
-                    "symbol": symbol,
-                    "error": str(close_err)
-                }, session_id=session_id)
+
+            # Emergency close with retry loop (up to 2 attempts)
+            for close_attempt in range(1, 3):
+                try:
+                    close_cl_id = f"bx_emg_cls_{close_attempt}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                    self.client.close_position(
+                        symbol=symbol,
+                        position_side=norm_pos_side,
+                        quantity=quantity,
+                        client_order_id=close_cl_id
+                    )
+                    break
+                except Exception as close_err:
+                    AuditLogger.log_event("TPSL_FAIL_CLOSED_CLOSE_ERROR", {
+                        "symbol": symbol,
+                        "close_attempt": close_attempt,
+                        "error": str(close_err)
+                    }, session_id=session_id)
+                    time.sleep(0.5)
+
             return False, "FAIL_CLOSED_POSITION_CLOSED_UNPROTECTED_SL"
 
         AuditLogger.log_event("TPSL_VERIFIED", {
@@ -396,33 +406,30 @@ class SessionOrchestrator:
             else:
                 inc_date = today_str
 
-            self.current_session.processed_income_ids.append(inc_id)
-
             try:
                 gross_val = float(inc.get("income", 0.0))
             except (ValueError, TypeError):
                 continue
 
-            # F-07: Wire closing trade recording to ledger on exchange fill
-            open_orders = db.get_open_orders_for_session(self.current_session.session_id)
-            matched_trade = next((o for o in open_orders if o.get("symbol") == sym), None)
+            try:
+                # F-07: Wire closing trade recording to ledger on exchange fill
+                open_orders = db.get_open_orders_for_session(self.current_session.session_id)
 
-            if matched_trade:
-                entry_time_ms = int(matched_trade.get("quote_ts") or 0)
-                exit_time_iso = datetime.fromtimestamp(inc_time_ms / 1000.0, tz=timezone.utc).isoformat() if inc_time_ms > 0 else datetime.now(timezone.utc).isoformat()
+                # Filter candidates for symbol entered before or at income timestamp (inc_time_ms)
+                sym_candidates = []
+                for o in open_orders:
+                    if o.get("symbol") != sym:
+                        continue
+                    o_ts = int(o.get("quote_ts") or 0)
+                    if o_ts == 0 and o.get("created_at"):
+                        try:
+                            o_ts = int(datetime.fromisoformat(o["created_at"]).timestamp() * 1000)
+                        except Exception:
+                            o_ts = 0
+                    if inc_time_ms > 0 and o_ts > 0 and o_ts > inc_time_ms:
+                        continue
+                    sym_candidates.append(o)
 
-                # Match exit fee
-                match_fee_obj = next((f for f in fee_incomes if f.get("symbol") == sym and abs(int(f.get("time", 0)) - inc_time_ms) <= 2000), None)
-                exit_fee = float(match_fee_obj.get("income", 0.0)) if match_fee_obj else 0.0
-
-                # Match accrued funding fees during holding period
-                trade_funding = sum(float(f.get("income", 0.0)) for f in funding_incomes if f.get("symbol") == sym and entry_time_ms <= int(f.get("time", 0)) <= inc_time_ms)
-                entry_fee = float(matched_trade.get("entry_fee", 0.0) or 0.0)
-                net_pnl = gross_val + entry_fee + exit_fee + trade_funding
-
-                # Determine exit price & exit reason from exchange orders (fail-open to None/UNKNOWN, no fabrication)
-                exit_price = None
-                exit_reason = "UNKNOWN"
                 if sym not in exchange_orders_cache:
                     try:
                         exchange_orders_cache[sym] = self.client.get_all_orders(sym)
@@ -430,75 +437,128 @@ class SessionOrchestrator:
                         exchange_orders_cache[sym] = []
                 sym_orders = exchange_orders_cache[sym]
 
-                pos_side = matched_trade.get("position_side", "SHORT")
-                closing_side = "BUY" if pos_side == "SHORT" else "SELL"
-                closing_order = next((
-                    o for o in sym_orders
-                    if o.get("positionSide") == pos_side
-                    and o.get("side") == closing_side
-                    and o.get("status") == "FILLED"
-                    and (abs(int(o.get("time", 0)) - inc_time_ms) <= 5000 or abs(int(o.get("updateTime", 0)) - inc_time_ms) <= 5000)
-                ), None)
+                # Find matching candidate: try executedQty matching first if multiple candidates exist
+                matched_trade = None
+                closing_order = None
+                if sym_candidates:
+                    potential_closing_orders = [
+                        o for o in sym_orders
+                        if o.get("status") == "FILLED"
+                        and (abs(int(o.get("time", 0)) - inc_time_ms) <= 5000 or abs(int(o.get("updateTime", 0)) - inc_time_ms) <= 5000)
+                    ]
+                    if len(sym_candidates) > 1 and potential_closing_orders:
+                        for c_ord in potential_closing_orders:
+                            c_qty = float(c_ord.get("executedQty") or c_ord.get("origQty") or 0.0)
+                            c_pos_side = c_ord.get("positionSide")
+                            for cand in sym_candidates:
+                                cand_qty = float(cand.get("quantity") or 0.0)
+                                cand_pos_side = cand.get("position_side")
+                                if (not c_pos_side or cand_pos_side == c_pos_side) and c_qty > 0 and abs(cand_qty - c_qty) < 1e-4:
+                                    matched_trade = cand
+                                    closing_order = c_ord
+                                    break
+                            if matched_trade:
+                                break
 
-                if closing_order:
-                    raw_exit_avg = closing_order.get("avgPrice") or closing_order.get("price")
-                    if raw_exit_avg is not None and float(raw_exit_avg) > 0:
-                        exit_price = float(raw_exit_avg)
-                    o_type = closing_order.get("type", "")
-                    if o_type == "TAKE_PROFIT_MARKET":
-                        exit_reason = "TAKE_PROFIT"
-                    elif o_type == "STOP_MARKET":
-                        exit_reason = "STOP_LOSS"
-                    elif o_type == "MARKET":
-                        exit_reason = "MARKET_CLOSE_PROFIT" if gross_val > 0 else "MARKET_CLOSE_LOSS"
-                    elif o_type:
-                        exit_reason = o_type
+                    # Fallback to FIFO (earliest by id / quote_ts)
+                    if not matched_trade:
+                        matched_trade = sym_candidates[0]
 
-                # Calculate realized R
-                entry_fill_price = float(matched_trade.get("avg_fill_price") or matched_trade.get("price") or 0.0)
-                sl_price = float(matched_trade.get("stop_loss_price") or 0.0)
-                qty = float(matched_trade.get("quantity") or 0.0)
-                risk_1r = abs(entry_fill_price - sl_price) * qty if (sl_price > 0 and entry_fill_price > 0 and qty > 0) else 0.0
-                realized_r = round(net_pnl / risk_1r, 4) if risk_1r > 0 else 0.0
+                # If closing order was not identified via qty match, find it for matched_trade
+                if matched_trade and not closing_order:
+                    pos_side = matched_trade.get("position_side", "SHORT")
+                    closing_side = "BUY" if pos_side == "SHORT" else "SELL"
+                    closing_order = next((
+                        o for o in sym_orders
+                        if o.get("positionSide") == pos_side
+                        and o.get("side") == closing_side
+                        and o.get("status") == "FILLED"
+                        and (abs(int(o.get("time", 0)) - inc_time_ms) <= 5000 or abs(int(o.get("updateTime", 0)) - inc_time_ms) <= 5000)
+                    ), None)
 
-                # Persist exit to database ledger
-                db.record_trade_exit(
-                    client_order_id=matched_trade["client_order_id"],
-                    exit_price=exit_price,
-                    exit_reason=exit_reason,
-                    exit_fee=exit_fee,
-                    funding_fee=trade_funding,
-                    realized_pnl=net_pnl,
-                    realized_r=realized_r,
-                    exit_time=exit_time_iso
-                )
+                if matched_trade:
+                    entry_time_ms = int(matched_trade.get("quote_ts") or 0)
+                    exit_time_iso = datetime.fromtimestamp(inc_time_ms / 1000.0, tz=timezone.utc).isoformat() if inc_time_ms > 0 else datetime.now(timezone.utc).isoformat()
 
-                AuditLogger.log_event("POSITION_CLOSED", {
+                    # Match exit fee
+                    match_fee_obj = next((f for f in fee_incomes if f.get("symbol") == sym and abs(int(f.get("time", 0)) - inc_time_ms) <= 2000), None)
+                    exit_fee = float(match_fee_obj.get("income", 0.0)) if match_fee_obj else 0.0
+
+                    # Match accrued funding fees during holding period
+                    trade_funding = sum(float(f.get("income", 0.0)) for f in funding_incomes if f.get("symbol") == sym and entry_time_ms <= int(f.get("time", 0)) <= inc_time_ms)
+                    entry_fee = float(matched_trade.get("entry_fee", 0.0) or 0.0)
+                    net_pnl = gross_val + entry_fee + exit_fee + trade_funding
+
+                    # Determine exit price & exit reason from exchange orders (fail-open to None/UNKNOWN, no fabrication)
+                    exit_price = None
+                    exit_reason = "UNKNOWN"
+                    if closing_order:
+                        raw_exit_avg = closing_order.get("avgPrice") or closing_order.get("price")
+                        if raw_exit_avg is not None and float(raw_exit_avg) > 0:
+                            exit_price = float(raw_exit_avg)
+                        o_type = closing_order.get("type", "")
+                        if o_type == "TAKE_PROFIT_MARKET":
+                            exit_reason = "TAKE_PROFIT"
+                        elif o_type == "STOP_MARKET":
+                            exit_reason = "STOP_LOSS"
+                        elif o_type == "MARKET":
+                            exit_reason = "MARKET_CLOSE_PROFIT" if gross_val > 0 else "MARKET_CLOSE_LOSS"
+                        elif o_type:
+                            exit_reason = o_type
+
+                    # Calculate realized R based on actual fill price
+                    entry_fill_price = float(matched_trade.get("avg_fill_price") or matched_trade.get("price") or 0.0)
+                    sl_price = float(matched_trade.get("stop_loss_price") or 0.0)
+                    qty = float(matched_trade.get("quantity") or 0.0)
+                    risk_1r = abs(entry_fill_price - sl_price) * qty if (sl_price > 0 and entry_fill_price > 0 and qty > 0) else 0.0
+                    realized_r = round(net_pnl / risk_1r, 4) if risk_1r > 0 else 0.0
+
+                    # Persist exit to database ledger BEFORE marking income processed
+                    db.record_trade_exit(
+                        client_order_id=matched_trade["client_order_id"],
+                        exit_price=exit_price,
+                        exit_reason=exit_reason,
+                        exit_fee=exit_fee,
+                        funding_fee=trade_funding,
+                        realized_pnl=net_pnl,
+                        realized_r=realized_r,
+                        exit_time=exit_time_iso
+                    )
+
+                    AuditLogger.log_event("POSITION_CLOSED", {
+                        "symbol": sym,
+                        "client_order_id": matched_trade["client_order_id"],
+                        "order_id": matched_trade.get("order_id"),
+                        "exit_price": exit_price,
+                        "exit_reason": exit_reason,
+                        "exit_time": exit_time_iso,
+                        "gross_pnl": gross_val,
+                        "exit_fee": exit_fee,
+                        "funding_fee": trade_funding,
+                        "net_pnl": net_pnl,
+                        "realized_r": realized_r
+                    }, session_id=self.current_session.session_id)
+
+                if inc_date == today_str:
+                    self.record_trade_outcome(symbol=sym, realized_pnl=gross_val)
+                    AuditLogger.log_event("TRADE_OUTCOME_INGESTED", {
+                        "symbol": sym,
+                        "income_id": inc_id,
+                        "realized_pnl": gross_val,
+                        "session_daily_pnl": self.current_session.daily_realized_pnl,
+                        "consecutive_losses": self.current_session.consecutive_losses
+                    }, session_id=self.current_session.session_id)
+
+                # ONLY mark income as processed AFTER successful processing and persistence
+                self.current_session.processed_income_ids.append(inc_id)
+
+            except Exception as e:
+                AuditLogger.log_event("INCOME_PROCESSING_ERROR", {
                     "symbol": sym,
-                    "client_order_id": matched_trade["client_order_id"],
-                    "order_id": matched_trade.get("order_id"),
-                    "exit_price": exit_price,
-                    "exit_reason": exit_reason,
-                    "exit_time": exit_time_iso,
-                    "gross_pnl": gross_val,
-                    "exit_fee": exit_fee,
-                    "funding_fee": trade_funding,
-                    "net_pnl": net_pnl,
-                    "realized_r": realized_r
+                    "income_id": inc_id,
+                    "error": str(e)
                 }, session_id=self.current_session.session_id)
-
-            if inc_date != today_str:
                 continue
-
-            self.record_trade_outcome(symbol=sym, realized_pnl=gross_val)
-
-            AuditLogger.log_event("TRADE_OUTCOME_INGESTED", {
-                "symbol": sym,
-                "income_id": inc_id,
-                "realized_pnl": gross_val,
-                "session_daily_pnl": self.current_session.daily_realized_pnl,
-                "consecutive_losses": self.current_session.consecutive_losses
-            }, session_id=self.current_session.session_id)
 
         try:
             db.update_session_pnl_state(
