@@ -6,7 +6,7 @@ import math
 import json
 import threading
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from pydantic import BaseModel, Field
 
 from config import AppConfig
@@ -186,6 +186,145 @@ class SessionOrchestrator:
                 }, session_id=self.current_session.session_id)
         elif realized_pnl > 0:
             self.current_session.consecutive_losses = 0
+
+    def _verify_and_enforce_tpsl(
+        self,
+        symbol: str,
+        position_side: str,
+        quantity: float,
+        stop_loss_price: Optional[float],
+        take_profit_price: Optional[float],
+        session_id: str,
+        contract_info: Optional[Dict[str, Any]] = None
+    ) -> Tuple[bool, str]:
+        """
+        Tugas 4: Verification + Fail-Closed enforcement for attached TP/SL.
+        Guarantees that no filled position is left naked without confirmed resting Stop Loss.
+        If Stop Loss is dropped and cannot be recovered via independent trigger,
+        the position is immediately closed fail-closed.
+        """
+        if stop_loss_price is None and take_profit_price is None:
+            return True, "NO_TPSL_REQUESTED"
+
+        # 1. Poll exchange open orders to verify TP/SL presence
+        try:
+            open_orders = self.client.get_open_orders(symbol)
+        except Exception as e:
+            AuditLogger.log_event("TPSL_VERIFY_POLL_ERROR", {
+                "symbol": symbol,
+                "error": str(e)
+            }, session_id=session_id)
+            open_orders = []
+
+        norm_pos_side = position_side.upper()
+        matching_orders = [
+            o for o in open_orders
+            if isinstance(o, dict) and o.get("positionSide") == norm_pos_side
+        ]
+        has_sl = any(o.get("type") == "STOP_MARKET" for o in matching_orders)
+        has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in matching_orders)
+
+        # 2. If SL or TP is missing, attempt immediate independent placement
+        if stop_loss_price is not None and not has_sl:
+            AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
+                "symbol": symbol,
+                "missing": "STOP_MARKET",
+                "stop_loss_price": stop_loss_price,
+                "position_side": norm_pos_side
+            }, session_id=session_id)
+
+            sl_val = float(stop_loss_price)
+            if contract_info and "pricePrecision" in contract_info:
+                sl_val = round(sl_val, int(contract_info["pricePrecision"]))
+
+            try:
+                retry_cl_id = f"bx_sl_retry_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                self.client.place_tpsl_order(
+                    symbol=symbol,
+                    position_side=norm_pos_side,
+                    trigger_type="STOP_MARKET",
+                    stop_price=sl_val,
+                    client_order_id=retry_cl_id,
+                    quantity=quantity
+                )
+            except Exception as err:
+                AuditLogger.log_event("TPSL_RETRY_FAILED", {
+                    "symbol": symbol,
+                    "type": "STOP_MARKET",
+                    "error": str(err)
+                }, session_id=session_id)
+
+        if take_profit_price is not None and not has_tp:
+            AuditLogger.log_event("TPSL_SILENT_DROP_DETECTED", {
+                "symbol": symbol,
+                "missing": "TAKE_PROFIT_MARKET",
+                "take_profit_price": take_profit_price,
+                "position_side": norm_pos_side
+            }, session_id=session_id)
+
+            tp_val = float(take_profit_price)
+            if contract_info and "pricePrecision" in contract_info:
+                tp_val = round(tp_val, int(contract_info["pricePrecision"]))
+
+            try:
+                retry_cl_id = f"bx_tp_retry_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                self.client.place_tpsl_order(
+                    symbol=symbol,
+                    position_side=norm_pos_side,
+                    trigger_type="TAKE_PROFIT_MARKET",
+                    stop_price=tp_val,
+                    client_order_id=retry_cl_id,
+                    quantity=quantity
+                )
+            except Exception as err:
+                AuditLogger.log_event("TPSL_RETRY_FAILED", {
+                    "symbol": symbol,
+                    "type": "TAKE_PROFIT_MARKET",
+                    "error": str(err)
+                }, session_id=session_id)
+
+        # 3. Re-verify if retries were attempted
+        if (stop_loss_price is not None and not has_sl) or (take_profit_price is not None and not has_tp):
+            try:
+                recheck_orders = self.client.get_open_orders(symbol)
+                recheck_matching = [
+                    o for o in recheck_orders
+                    if isinstance(o, dict) and o.get("positionSide") == norm_pos_side
+                ]
+                has_sl = any(o.get("type") == "STOP_MARKET" for o in recheck_matching)
+                has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in recheck_matching)
+            except Exception:
+                pass
+
+        # 4. Fail-closed: Stop Loss is non-negotiable for risk protection
+        if stop_loss_price is not None and not has_sl:
+            AuditLogger.log_event("TPSL_FAIL_CLOSED_CLOSING_POSITION", {
+                "symbol": symbol,
+                "position_side": norm_pos_side,
+                "quantity": quantity,
+                "reason": "STOP_LOSS_UNCONFIRMED_FAIL_CLOSED"
+            }, session_id=session_id)
+            try:
+                close_cl_id = f"bx_emg_cls_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                self.client.close_position(
+                    symbol=symbol,
+                    position_side=norm_pos_side,
+                    quantity=quantity,
+                    client_order_id=close_cl_id
+                )
+            except Exception as close_err:
+                AuditLogger.log_event("TPSL_FAIL_CLOSED_CLOSE_ERROR", {
+                    "symbol": symbol,
+                    "error": str(close_err)
+                }, session_id=session_id)
+            return False, "FAIL_CLOSED_POSITION_CLOSED_UNPROTECTED_SL"
+
+        AuditLogger.log_event("TPSL_VERIFIED", {
+            "symbol": symbol,
+            "has_sl": has_sl,
+            "has_tp": has_tp
+        }, session_id=session_id)
+        return True, "TPSL_VERIFIED"
 
     def reconcile_outcomes(self) -> bool:
         """
@@ -800,6 +939,21 @@ class SessionOrchestrator:
                             self.current_session.filled_count += 1
                         placed = True
 
+                        # Tugas 4: Fail-closed verification of TP/SL on exchange
+                        tpsl_ok, tpsl_msg = self._verify_and_enforce_tpsl(
+                            symbol=cand.symbol,
+                            position_side=target_pos_side,
+                            quantity=sizing.quantity,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price,
+                            session_id=session_id,
+                            contract_info=cand.contract_info
+                        )
+                        execution_report["tpsl_verified"] = tpsl_ok
+                        execution_report["tpsl_verification_status"] = tpsl_msg
+                        if not tpsl_ok:
+                            execution_report["fail_closed_emergency_closed"] = True
+
                         AuditLogger.log_order_submission(
                             symbol=cand.symbol,
                             side=target_order_side,
@@ -1213,6 +1367,21 @@ class SessionOrchestrator:
                                     self.current_session.filled_count += 1
                                     self.watchlist.evict_entry(entry.symbol, reason="TRIGGER_EXECUTED", client=self.client, session_id=self.current_session.session_id)
                                     available_slots -= 1
+
+                                    # Tugas 4: Fail-closed verification of TP/SL on exchange
+                                    tpsl_ok, tpsl_msg = self._verify_and_enforce_tpsl(
+                                        symbol=entry.symbol,
+                                        position_side=target_pos_side,
+                                        quantity=sizing.quantity,
+                                        stop_loss_price=sizing.stop_loss_price,
+                                        take_profit_price=sizing.take_profit_price,
+                                        session_id=self.current_session.session_id,
+                                        contract_info=getattr(entry, "contract_info", None)
+                                    )
+                                    w_exec_report["tpsl_verified"] = tpsl_ok
+                                    w_exec_report["tpsl_verification_status"] = tpsl_msg
+                                    if not tpsl_ok:
+                                        w_exec_report["fail_closed_emergency_closed"] = True
 
                                     AuditLogger.log_order_submission(
                                         symbol=entry.symbol,
