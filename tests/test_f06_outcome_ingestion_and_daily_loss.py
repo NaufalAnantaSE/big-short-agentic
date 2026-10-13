@@ -9,6 +9,7 @@ Audit findings (F-06):
 4. No day-boundary reset logic.
 """
 import time
+import uuid
 from datetime import datetime, timezone
 import pytest
 
@@ -16,6 +17,13 @@ from config import AppConfig
 from orchestrator import SessionOrchestrator
 from scanner import CandidatePair
 import db
+
+
+@pytest.fixture(autouse=True)
+def setup_db(tmp_path, monkeypatch):
+    test_db = str(tmp_path / f"test_{uuid.uuid4().hex}.db")
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
 
 
 def test_reconcile_outcomes_ingests_realized_pnl_and_deduplicates(mocker):
