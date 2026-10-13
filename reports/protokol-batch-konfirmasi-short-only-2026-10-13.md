@@ -13,7 +13,7 @@
 |---|---|---|
 | **Environment** | `BINGX_VST` | Paper trading swap perpetual demo resmi BingX |
 | **Execution Mode** | `EXCHANGE_DEMO` | Order terkirim riil ke bursa VST (bukan local dry-run) |
-| **Direction Mode** | `SHORT` | Arah LONG dan BOTH dimatikan permanen |
+| **Direction Mode** | `SHORT` | Arah LONG dan BOTH dimatikan untuk batch ini (BOTH ditunda untuk pengujian terpisah di masa mendatang) |
 | **AI Model** | Gemini 3.8 Flash (`testing_v1`) | **Identik 100% dengan batch BOTH** (Dilarang ganti model/provider) |
 | **AI Prompt** | Two-Tier Triage & Deep Dual-Thesis | **Identik 100% dengan batch BOTH** (Dilarang ubah prompt) |
 | **Universe** | Top Volatile & Gainer Pairs | Identik dengan batch BOTH |
