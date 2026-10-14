@@ -18,6 +18,7 @@
 | **AI Prompt** | Two-Tier Triage & Deep Dual-Thesis | **Identik 100% dengan batch BOTH** (Dilarang ubah prompt) |
 | **Universe** | Top Volatile & Gainer Pairs | Identik dengan batch BOTH |
 | **Risk Budget per Trade (1R)** | **2.00 VST / USDT** | Fixed structural risk (|entry - SL| × qty = ~$2.00) |
+| **Simultaneous Quota** | **2** (Trade #1–#5) $\rightarrow$ **10** (Trade #6–#30) | Lihat Amandemen 1 (15 Okt 2026) |
 | **Target Risk:Reward** | **>= 2.0x** | Dynamic ATR TP/SL (SL 1.5% - 6.0%, TP >= 2x SL) |
 | **Akun Sampel Utama** | **User 3 (`naufal`)** | 1 akun utama diprioritaskan demi independensi observasi |
 | **Akun Sekunder** | User 5 (`agussiswanto`) | Jika aktif: entri simbol bersama dicatat sebagai 1 sinyal unik |
@@ -90,3 +91,17 @@ Setelah seluruh 30 trade selesai:
      * Batas bawah $CI_{90\%} > 0.00\text{ R}$: **Mendukung hipotesis** bahwa sistem SHORT memiliki keunggulan statistik (*positive edge*). Membuka gerbang ke review terpisah untuk kesiapan dana nyata (bukan persetujuan otomatis live pilot).
      * Rentang CI mencakup angka $0.00\text{ R}$: **Inkonklusif** (memerlukan evaluasi atau peninjauan ulang).
      * Mean $\bar{R} \le 0.00\text{ R}$: **Menolak hipotesis**.
+
+     ---
+
+     ## 6. Amandemen Protokol (Dokumentasi Perubahan Pra-Registrasi)
+
+     ### Amandemen 1 — Penyesuaian Batas Kuota Posisi Paralel (15 Oktober 2026)
+     - **Tanggal:** 15 Oktober 2026 (03:50 WIB)
+     - **Otorisasi:** Disetujui oleh Naufal Ananta (Decision Maker) atas rekomendasi review teknis Gemini 4 Argon & Muse.
+     - **Rincian Perubahan:**
+     * **Trade #1 s/d Trade #5:** Berjalan dengan kuota simultan `quota = 2` (maksimal 2 posisi paralel bersamaan).
+     * **Trade #6 s/d Trade #30:** Batas kuota dinaikkan menjadi `quota = 10` (maksimal 10 posisi paralel bersamaan).
+     - **Rasional:** Menghilangkan *bottleneck* durasi tunggu slot kuota (holding time 4–12 jam pada 2 koin sideways yang menahan pemindaian pasar) tanpa mengubah logika strategi, model AI (Gemini 3.8 Flash), prompt, filter hard-gate, formula teknikal, maupun parameter risiko tetap `risk_budget_per_trade = 2.00 VST`.
+     - **Catatan Risiko:** Maksimal eksposur risiko serentak jika 10 posisi terbuka penuh adalah 10R (~20.00 VST) dengan estimasi margin terpakai ~35–55 VST. Batas total kumulatif batch tetap **N = 30 entry terisi**.
+
