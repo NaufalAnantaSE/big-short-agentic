@@ -391,6 +391,15 @@ class SessionOrchestrator:
         # Cache of exchange orders per symbol to avoid repeated API requests
         exchange_orders_cache: Dict[str, list] = {}
 
+        # Ensure executed_symbols always includes all symbols recorded in order_records for this session
+        try:
+            db_syms = db.get_session_executed_symbols(self.current_session.session_id)
+            for s in db_syms:
+                if s not in self.current_session.executed_symbols:
+                    self.current_session.executed_symbols.append(s)
+        except Exception:
+            pass
+
         for inc in pnl_incomes:
             inc_id = str(inc.get("incomeId") or inc.get("tradeId") or inc.get("tranId") or inc.get("time") or "")
             if not inc_id or inc_id in self.current_session.processed_income_ids:
@@ -493,12 +502,26 @@ class SessionOrchestrator:
                     exit_time_iso = datetime.fromtimestamp(inc_time_ms / 1000.0, tz=timezone.utc).isoformat() if inc_time_ms > 0 else datetime.now(timezone.utc).isoformat()
 
                     # Match exit fee
-                    match_fee_obj = next((f for f in fee_incomes if f.get("symbol") == sym and abs(int(f.get("time", 0)) - inc_time_ms) <= 2000), None)
+                    match_fee_obj = next((f for f in fee_incomes if f.get("symbol") == sym and abs(int(f.get("time", 0)) - inc_time_ms) <= 5000), None)
                     exit_fee = float(match_fee_obj.get("income", 0.0)) if match_fee_obj else 0.0
+
+                    # Match entry fee from income ledger if not already recorded on entry row
+                    entry_fee = float(matched_trade.get("entry_fee", 0.0) or 0.0)
+                    if entry_fee == 0.0 and entry_time_ms > 0:
+                        match_entry_fee_obj = next(
+                            (
+                                f for f in fee_incomes
+                                if f.get("symbol") == sym
+                                and f is not match_fee_obj
+                                and abs(int(f.get("time", 0)) - entry_time_ms) <= 5000
+                            ),
+                            None
+                        )
+                        if match_entry_fee_obj is not None:
+                            entry_fee = float(match_entry_fee_obj.get("income", 0.0))
 
                     # Match accrued funding fees during holding period
                     trade_funding = sum(float(f.get("income", 0.0)) for f in funding_incomes if f.get("symbol") == sym and entry_time_ms <= int(f.get("time", 0)) <= inc_time_ms)
-                    entry_fee = float(matched_trade.get("entry_fee", 0.0) or 0.0)
                     net_pnl = gross_val + entry_fee + exit_fee + trade_funding
 
                     # Determine exit price & exit reason from exchange orders (fail-open to None/UNKNOWN, no fabrication)
@@ -534,7 +557,8 @@ class SessionOrchestrator:
                         funding_fee=trade_funding,
                         realized_pnl=net_pnl,
                         realized_r=realized_r,
-                        exit_time=exit_time_iso
+                        exit_time=exit_time_iso,
+                        entry_fee=entry_fee
                     )
 
                     AuditLogger.log_event("POSITION_CLOSED", {
@@ -545,6 +569,7 @@ class SessionOrchestrator:
                         "exit_reason": exit_reason,
                         "exit_time": exit_time_iso,
                         "gross_pnl": gross_val,
+                        "entry_fee": entry_fee,
                         "exit_fee": exit_fee,
                         "funding_fee": trade_funding,
                         "net_pnl": net_pnl,

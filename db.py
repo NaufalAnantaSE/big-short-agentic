@@ -427,6 +427,13 @@ def get_latest_user_session(user_id: int) -> Optional[Dict[str, Any]]:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+def get_session(session_id: str) -> Optional[Dict[str, Any]]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sessions WHERE session_id = ? LIMIT 1", (session_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
 def record_order(
     user_id: int,
     session_id: str,
@@ -517,27 +524,50 @@ def record_trade_exit(
     funding_fee: float = 0.0,
     realized_pnl: Optional[float] = None,
     realized_r: Optional[float] = None,
-    exit_time: Optional[str] = None
+    exit_time: Optional[str] = None,
+    entry_fee: Optional[float] = None
 ):
     """P1-4 / F-07: Records trade exit fill, reason, fees, and realized R in the ledger."""
     timestamp_str = exit_time or datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-        UPDATE order_records
-        SET status = 'CLOSED',
-            exit_price = ?,
-            exit_time = ?,
-            exit_reason = ?,
-            exit_fee = ?,
-            funding_fee = ?,
-            realized_pnl = ?,
-            realized_r = ?
-        WHERE (client_order_id = ? OR order_id = ?) AND exit_time IS NULL
-        """, (
-            exit_price, timestamp_str, exit_reason, exit_fee, funding_fee,
-            realized_pnl or 0.0, realized_r or 0.0, client_order_id, client_order_id
-        ))
+        if entry_fee is not None:
+            cursor.execute("""
+            UPDATE order_records
+            SET status = 'CLOSED',
+                exit_price = ?,
+                exit_time = ?,
+                exit_reason = ?,
+                entry_fee = ?,
+                exit_fee = ?,
+                funding_fee = ?,
+                realized_pnl = ?,
+                realized_r = ?
+            WHERE (client_order_id = ? OR order_id = ?) AND exit_time IS NULL
+            """, (
+                exit_price, timestamp_str, exit_reason, entry_fee, exit_fee, funding_fee,
+                realized_pnl if realized_pnl is not None else 0.0,
+                realized_r if realized_r is not None else 0.0,
+                client_order_id, client_order_id
+            ))
+        else:
+            cursor.execute("""
+            UPDATE order_records
+            SET status = 'CLOSED',
+                exit_price = ?,
+                exit_time = ?,
+                exit_reason = ?,
+                exit_fee = ?,
+                funding_fee = ?,
+                realized_pnl = ?,
+                realized_r = ?
+            WHERE (client_order_id = ? OR order_id = ?) AND exit_time IS NULL
+            """, (
+                exit_price, timestamp_str, exit_reason, exit_fee, funding_fee,
+                realized_pnl if realized_pnl is not None else 0.0,
+                realized_r if realized_r is not None else 0.0,
+                client_order_id, client_order_id
+            ))
         conn.commit()
 
 
@@ -551,6 +581,28 @@ def get_open_orders_for_session(session_id: str) -> List[Dict[str, Any]]:
             ORDER BY id ASC
         """, (session_id,))
         return [dict(r) for r in cursor.fetchall()]
+
+
+def count_session_orders(session_id: str) -> int:
+    """Counts total cumulative trade entries recorded for a session (for N=30 batch tracking)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM order_records WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+
+def get_session_executed_symbols(session_id: str) -> List[str]:
+    """Returns distinct symbols recorded in order_records for a session in chronological order."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT symbol FROM order_records WHERE session_id = ? ORDER BY id ASC", (session_id,))
+        seen = []
+        for r in cursor.fetchall():
+            sym = r[0] if r else None
+            if sym and sym not in seen:
+                seen.append(sym)
+        return seen
 
 
 def get_closed_trade_attribution(order_identifier: str) -> Optional[Dict[str, Any]]:

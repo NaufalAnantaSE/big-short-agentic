@@ -757,3 +757,205 @@ def test_f07_reconciliation_rejects_entry_order_as_closing_order(mocker):
     assert attr_2["realized_pnl"] == pytest.approx(125.0)
 
 
+def test_f07_hydrate_session_state_preserves_new_executed_symbols_and_reconciles_subsequent_trades(mocker):
+    """
+    Acceptance Test (Titik 4A & Langkah 5.1):
+    1. Simulates Trade #1 (CNPY-USDT) saved in sessions.executed_symbols = '["CNPY-USDT"]'.
+    2. Simulates Trade #2 (CITREA-USDT) and Trade #3 (STANDARD-USDT) in order_records and in-memory orch.
+    3. _hydrate_session_state must merge symbols and preserve all 3 symbols instead of overwriting with only CNPY.
+    4. reconcile_outcomes() successfully reconciles all 3 trades to CLOSED with TRUE-NET entry_fee, exit_fee, funding_fee.
+    """
+    import json
+    from tenant_manager import TenantSessionManager
+
+    config = AppConfig(api_key="mock", secret_key="mock")
+    tm = TenantSessionManager(config)
+    user_id = db.create_user(f"trader_{uuid.uuid4().hex[:6]}", "pass123", "Trader", role="user")
+    db.update_user_credentials(user_id, "mock_key", "mock_secret", is_demo=True)
+    orch = tm.get_orchestrator(user_id=user_id)
+
+    sess_id = f"bx_sess_test_{uuid.uuid4().hex[:6]}"
+    now = time.time()
+    db.save_session(
+        session_id=sess_id,
+        user_id=user_id,
+        status="ACTIVE_SEARCHING",
+        margin=5.0,
+        leverage=20,
+        quota=2,
+        filled_count=1,
+        mode="PUMP_GAINERS",
+        is_live=False,
+        started_at=now - 3600,
+        auto_scan=True,
+        scan_interval=60,
+        last_scan_at=now,
+        latest_evaluations="[]",
+        environment="BINGX_VST",
+        execution_mode="EXCHANGE_DEMO",
+        direction_mode="SHORT",
+        exit_policy="MANUAL_ONLY",
+        risk_budget_per_trade=2.0
+    )
+
+    # Initial DB session state only has CNPY-USDT
+    db.update_session_pnl_state(
+        session_id=sess_id,
+        daily_realized_pnl=0.0,
+        consecutive_losses=0,
+        cooldown_until=0.0,
+        last_pnl_date="2026-10-15",
+        processed_income_ids="[]",
+        executed_symbols=json.dumps(["CNPY-USDT"])
+    )
+
+    t_base_ms = int(now * 1000)
+
+    # Record 3 trades in order_records: CNPY, CITREA, STANDARD
+    db.record_trade_entry(
+        user_id=1, session_id=sess_id, symbol="CNPY-USDT", side="SELL", position_side="SHORT",
+        quantity=150.0, price=0.30, notional=45.0, effective_leverage=18,
+        client_order_id="cl_cnpy_test", order_id="ord_cnpy_01", status="FILLED",
+        stop_loss_price=0.32, take_profit_price=0.26, quote_ts=t_base_ms - 30000,
+        request_price=0.30, avg_fill_price=0.30, entry_fee=0.0
+    )
+    db.record_trade_entry(
+        user_id=1, session_id=sess_id, symbol="CITREA-USDT", side="SELL", position_side="SHORT",
+        quantity=5000.0, price=0.014, notional=70.0, effective_leverage=20,
+        client_order_id="cl_citrea_test", order_id="ord_citrea_02", status="FILLED",
+        stop_loss_price=0.015, take_profit_price=0.013, quote_ts=t_base_ms - 20000,
+        request_price=0.014, avg_fill_price=0.014, entry_fee=0.0
+    )
+    db.record_trade_entry(
+        user_id=1, session_id=sess_id, symbol="STANDARD-USDT", side="SELL", position_side="SHORT",
+        quantity=200.0, price=0.33, notional=66.0, effective_leverage=20,
+        client_order_id="cl_standard_test", order_id="ord_standard_03", status="FILLED",
+        stop_loss_price=0.34, take_profit_price=0.30, quote_ts=t_base_ms - 10000,
+        request_price=0.33, avg_fill_price=0.33, entry_fee=0.0
+    )
+
+    # Initialize orch.current_session and simulate runtime addition of CITREA and STANDARD
+    saved_sess = db.get_session(sess_id)
+    tm._hydrate_session_state(orch, saved_sess, active_count=2)
+    orch.current_session.executed_symbols = ["CNPY-USDT", "CITREA-USDT", "STANDARD-USDT"]
+
+    # Re-hydrate using DB row that only had ["CNPY-USDT"]
+    # Thanks to db.get_session_executed_symbols merge, all 3 symbols must be preserved!
+    tm._hydrate_session_state(orch, saved_sess, active_count=2)
+    assert set(orch.current_session.executed_symbols) == {"CNPY-USDT", "CITREA-USDT", "STANDARD-USDT"}
+
+    # Mock incomes for all 3 closed trades
+    mock_incomes = [
+        # CNPY SL
+        {"incomeId": "inc_cnpy_pnl", "symbol": "CNPY-USDT", "incomeType": "REALIZED_PNL", "income": "-2.00", "time": t_base_ms - 25000},
+        {"incomeId": "inc_cnpy_entry_fee", "symbol": "CNPY-USDT", "incomeType": "TRADING_FEE", "income": "-0.02", "time": t_base_ms - 30000},
+        {"incomeId": "inc_cnpy_exit_fee", "symbol": "CNPY-USDT", "incomeType": "TRADING_FEE", "income": "-0.02", "time": t_base_ms - 25000},
+
+        # CITREA TP + Funding
+        {"incomeId": "inc_citrea_pnl", "symbol": "CITREA-USDT", "incomeType": "REALIZED_PNL", "income": "5.00", "time": t_base_ms - 15000},
+        {"incomeId": "inc_citrea_entry_fee", "symbol": "CITREA-USDT", "incomeType": "TRADING_FEE", "income": "-0.03", "time": t_base_ms - 20000},
+        {"incomeId": "inc_citrea_exit_fee", "symbol": "CITREA-USDT", "incomeType": "TRADING_FEE", "income": "-0.03", "time": t_base_ms - 15000},
+        {"incomeId": "inc_citrea_fund", "symbol": "CITREA-USDT", "incomeType": "FUNDING_FEE", "income": "0.01", "time": t_base_ms - 18000},
+
+        # STANDARD SL
+        {"incomeId": "inc_standard_pnl", "symbol": "STANDARD-USDT", "incomeType": "REALIZED_PNL", "income": "-2.20", "time": t_base_ms - 5000},
+        {"incomeId": "inc_standard_entry_fee", "symbol": "STANDARD-USDT", "incomeType": "TRADING_FEE", "income": "-0.03", "time": t_base_ms - 10000},
+        {"incomeId": "inc_standard_exit_fee", "symbol": "STANDARD-USDT", "incomeType": "TRADING_FEE", "income": "-0.03", "time": t_base_ms - 5000},
+    ]
+
+    mock_orders = {
+        "CNPY-USDT": [
+            {"orderId": "close_cnpy", "symbol": "CNPY-USDT", "side": "BUY", "positionSide": "SHORT", "type": "STOP_MARKET", "status": "FILLED", "avgPrice": "0.32", "time": t_base_ms - 25000}
+        ],
+        "CITREA-USDT": [
+            {"orderId": "close_citrea", "symbol": "CITREA-USDT", "side": "BUY", "positionSide": "SHORT", "type": "TAKE_PROFIT_MARKET", "status": "FILLED", "avgPrice": "0.013", "time": t_base_ms - 15000}
+        ],
+        "STANDARD-USDT": [
+            {"orderId": "close_standard", "symbol": "STANDARD-USDT", "side": "BUY", "positionSide": "SHORT", "type": "STOP_MARKET", "status": "FILLED", "avgPrice": "0.34", "time": t_base_ms - 5000}
+        ]
+    }
+
+    mocker.patch.object(orch.client, "get_income", return_value=mock_incomes)
+    mocker.patch.object(orch.client, "get_all_orders", side_effect=lambda sym, **kwargs: mock_orders.get(sym, []))
+
+    ok = orch.reconcile_outcomes()
+    assert ok is True
+
+    attr_cnpy = db.get_closed_trade_attribution("cl_cnpy_test")
+    attr_citrea = db.get_closed_trade_attribution("cl_citrea_test")
+    attr_standard = db.get_closed_trade_attribution("cl_standard_test")
+
+    # All 3 trades must be successfully reconciled to status='CLOSED'
+    assert attr_cnpy["exit_time"] is not None
+    assert attr_cnpy["exit_reason"] == "STOP_LOSS"
+    assert attr_cnpy["entry_fee"] == pytest.approx(-0.02)
+    assert attr_cnpy["exit_fee"] == pytest.approx(-0.02)
+    assert attr_cnpy["realized_pnl"] == pytest.approx(-2.04)
+
+    assert attr_citrea["exit_time"] is not None
+    assert attr_citrea["exit_reason"] == "TAKE_PROFIT"
+    assert attr_citrea["entry_fee"] == pytest.approx(-0.03)
+    assert attr_citrea["exit_fee"] == pytest.approx(-0.03)
+    assert attr_citrea["funding_fee"] == pytest.approx(0.01)
+    assert attr_citrea["realized_pnl"] == pytest.approx(4.95)
+
+    assert attr_standard["exit_time"] is not None
+    assert attr_standard["exit_reason"] == "STOP_LOSS"
+    assert attr_standard["entry_fee"] == pytest.approx(-0.03)
+    assert attr_standard["exit_fee"] == pytest.approx(-0.03)
+    assert attr_standard["realized_pnl"] == pytest.approx(-2.26)
+
+
+def test_f07_restored_session_in_db_is_not_overwritten_to_terminated_by_in_memory_state():
+    """
+    Acceptance Test (Titik 4C & Langkah 5.2):
+    When DB session status is restored to 'ACTIVE_SEARCHING' but in-memory orch.current_session
+    has status='TERMINATED' with token 'TERMINATED_...', _hydrate_session_state must restore
+    orch.current_session.status to 'ACTIVE_SEARCHING' with a fresh generation_token.
+    """
+    from tenant_manager import TenantSessionManager
+
+    config = AppConfig(api_key="mock", secret_key="mock")
+    tm = TenantSessionManager(config)
+    user_id = db.create_user(f"trader_{uuid.uuid4().hex[:6]}", "pass123", "Trader", role="user")
+    db.update_user_credentials(user_id, "mock_key", "mock_secret", is_demo=True)
+    orch = tm.get_orchestrator(user_id=user_id)
+
+    sess_id = f"bx_sess_restored_{uuid.uuid4().hex[:6]}"
+    now = time.time()
+    db.save_session(
+        session_id=sess_id,
+        user_id=user_id,
+        status="ACTIVE_SEARCHING",
+        margin=5.0,
+        leverage=20,
+        quota=2,
+        filled_count=1,
+        mode="PUMP_GAINERS",
+        is_live=False,
+        started_at=now,
+        auto_scan=False,
+        scan_interval=60,
+        last_scan_at=now,
+        latest_evaluations="[]",
+        environment="BINGX_VST",
+        execution_mode="EXCHANGE_DEMO",
+        direction_mode="SHORT",
+        exit_policy="MANUAL_ONLY",
+        risk_budget_per_trade=2.0
+    )
+
+    # Initialize orch with TERMINATED status and token
+    saved_sess = db.get_session(sess_id)
+    tm._hydrate_session_state(orch, saved_sess, active_count=1)
+    orch.current_session.status = "TERMINATED"
+    orch.current_session.generation_token = "TERMINATED_old_token_xyz"
+
+    # Re-hydrate with DB row where status is ACTIVE_SEARCHING
+    tm._hydrate_session_state(orch, saved_sess, active_count=1)
+
+    assert orch.current_session.status == "ACTIVE_SEARCHING"
+    assert not orch.current_session.generation_token.startswith("TERMINATED_")
+    assert len(orch.current_session.generation_token) > 0
+
+

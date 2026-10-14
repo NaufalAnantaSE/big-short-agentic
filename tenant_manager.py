@@ -139,27 +139,31 @@ class TenantSessionManager:
         elif not isinstance(p_ids, list):
             p_ids = []
 
-        exec_syms = sess_data.get("executed_symbols")
-        if isinstance(exec_syms, str):
+        exec_syms_raw = sess_data.get("executed_symbols")
+        if isinstance(exec_syms_raw, str):
             try:
-                exec_syms = json.loads(exec_syms)
+                exec_syms = json.loads(exec_syms_raw)
             except Exception:
                 exec_syms = []
-        elif not isinstance(exec_syms, list):
+        elif isinstance(exec_syms_raw, list):
+            exec_syms = list(exec_syms_raw)
+        else:
             exec_syms = []
 
-        if not exec_syms and sess_data.get("session_id"):
+        if sess_data.get("session_id"):
             try:
-                import db
-                with db.get_db() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT symbol FROM order_records WHERE session_id = ?", (sess_data["session_id"],))
-                    rows = cursor.fetchall()
-                    exec_syms = [r[0] for r in rows if r and r[0]]
+                for s in db.get_session_executed_symbols(sess_data["session_id"]):
+                    if s and s not in exec_syms:
+                        exec_syms.append(s)
             except Exception:
                 pass
 
-        if not orch.current_session:
+        if orch.current_session and orch.current_session.session_id == sess_data.get("session_id"):
+            for s in orch.current_session.executed_symbols:
+                if s and s not in exec_syms:
+                    exec_syms.append(s)
+
+        if not orch.current_session or orch.current_session.session_id != sess_data["session_id"]:
             orch.current_session = SessionState(
                 session_id=sess_data["session_id"],
                 status=sess_data.get("status", "ACTIVE_SEARCHING"),
@@ -182,8 +186,17 @@ class TenantSessionManager:
                 executed_symbols=exec_syms
             )
         else:
+            db_status = sess_data.get("status")
+            if db_status in ("ACTIVE_SEARCHING", "EXHAUSTED") and (
+                orch.current_session.status == "TERMINATED"
+                or str(getattr(orch.current_session, "generation_token", "")).startswith("TERMINATED_")
+            ):
+                import uuid
+                orch.current_session.status = db_status
+                orch.current_session.generation_token = uuid.uuid4().hex
             orch.current_session.universe_mode = sess_mode
             orch.current_session.filled_count = filled
+            orch.current_session.quota = quota
             if risk_budget is not None:
                 orch.current_session.risk_budget_per_trade = risk_budget
             if sess_data.get("daily_realized_pnl") is not None:
@@ -194,10 +207,10 @@ class TenantSessionManager:
                 orch.current_session.cooldown_until = cooldown
             if last_date:
                 orch.current_session.last_pnl_date = str(last_date)
-            if p_ids:
-                orch.current_session.processed_income_ids = p_ids
-            if exec_syms:
-                orch.current_session.executed_symbols = exec_syms
+            for pid in p_ids:
+                if pid not in orch.current_session.processed_income_ids:
+                    orch.current_session.processed_income_ids.append(pid)
+            orch.current_session.executed_symbols = exec_syms
 
         return orch.current_session
 
@@ -211,6 +224,9 @@ class TenantSessionManager:
 
             orch = self.get_orchestrator(user_id)
             self._hydrate_session_state(orch, sess, active_count)
+
+            # Always reconcile closed trade outcomes even when active slots are full
+            orch.reconcile_outcomes()
 
             # If quota is already filled:
             if active_count >= quota:
@@ -354,6 +370,18 @@ class TenantSessionManager:
         if current_sess:
             current_sess.filled_count = active_count
             if latest_db_sess:
+                db_sess_id = latest_db_sess.get("session_id")
+                db_status = latest_db_sess.get("status")
+                if (
+                    db_sess_id == current_sess.session_id
+                    and db_status in ("ACTIVE_SEARCHING", "EXHAUSTED")
+                    and current_sess.status == "TERMINATED"
+                ):
+                    import uuid
+                    current_sess.status = db_status
+                    if str(getattr(current_sess, "generation_token", "")).startswith("TERMINATED_"):
+                        current_sess.generation_token = uuid.uuid4().hex
+
                 if latest_db_sess.get("daily_realized_pnl") is not None:
                     current_sess.daily_realized_pnl = float(latest_db_sess["daily_realized_pnl"])
                 if latest_db_sess.get("consecutive_losses") is not None:
@@ -373,10 +401,11 @@ class TenantSessionManager:
             margin_per_pos = current_sess.margin_per_pos
             leverage = current_sess.leverage
             sess_id = current_sess.session_id
-            if active_count >= quota:
-                current_sess.status = "EXHAUSTED"
-            elif current_sess.status == "EXHAUSTED" and active_count < quota:
-                current_sess.status = "ACTIVE_SEARCHING"
+            if current_sess.status not in ("TERMINATED",):
+                if active_count >= quota:
+                    current_sess.status = "EXHAUSTED"
+                elif current_sess.status == "EXHAUSTED" and active_count < quota:
+                    current_sess.status = "ACTIVE_SEARCHING"
             current_status = current_sess.status
             environment = current_sess.environment
             execution_mode = current_sess.execution_mode
@@ -432,6 +461,7 @@ class TenantSessionManager:
             "session_id": sess_id,
             "quota": quota,
             "filled_count": active_count,
+            "total_entries_count": db.count_session_orders(sess_id) if sess_id else 0,
             "margin_per_pos": margin_per_pos,
             "leverage": leverage,
             "environment": environment,
@@ -826,6 +856,19 @@ class TenantSessionManager:
                     request_price=ev.get("request_price") or ev.get("price", 0.0),
                     avg_fill_price=ev.get("avg_fill_price"),
                     entry_fee=ev.get("fee", 0.0)
+                )
+
+                sym_placed = ev.get("symbol")
+                if sym_placed and sym_placed not in orch.current_session.executed_symbols:
+                    orch.current_session.executed_symbols.append(sym_placed)
+                db.update_session_pnl_state(
+                    session_id=orch.current_session.session_id,
+                    daily_realized_pnl=orch.current_session.daily_realized_pnl,
+                    consecutive_losses=orch.current_session.consecutive_losses,
+                    cooldown_until=orch.current_session.cooldown_until,
+                    last_pnl_date=orch.current_session.last_pnl_date,
+                    processed_income_ids=json.dumps(orch.current_session.processed_income_ids),
+                    executed_symbols=json.dumps(orch.current_session.executed_symbols)
                 )
 
             h["status"] = ev.get("status") or ("FILLED" if executed else "WAIT")
