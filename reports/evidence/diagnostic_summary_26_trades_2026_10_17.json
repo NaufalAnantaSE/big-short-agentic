@@ -1,0 +1,118 @@
+{
+  "session_state": {
+    "session_id": "bx_sess_1791926045_8981c2",
+    "user_id": 3,
+    "status": "ACTIVE_SEARCHING",
+    "quota": 10,
+    "filled_count": 2,
+    "auto_scan": 1,
+    "daily_realized_pnl": 0.0,
+    "consecutive_losses": 0,
+    "executed_symbols": "[\"CNPY-USDT\", \"KMNO-USDT\", \"CITREA-USDT\", \"STANDARD-USDT\", \"ZEREBRO-USDT\", \"CASHCAT-USDT\", \"NULLMASK-USDT\", \"GTC-USDT\", \"ZK-USDT\", \"STRK-USDT\", \"ZRO-USDT\", \"OTC-USDT\", \"CORE-USDT\", \"VVV-USDT\", \"AGT-USDT\", \"SHROOM-USDT\", \"SLX-USDT\", \"SAFE-USDT\", \"MARSCOIN-USDT\", \"CHIP-USDT\", \"GRASS-USDT\", \"PHA-USDT\", \"TIA-USDT\", \"DARKSWAP-USDT\", \"BASED-USDT\", \"SI-USDT\"]",
+    "started_at": 1791926045.8342974
+  },
+  "stratified_cohorts": {
+    "cohort_1a_fase_a_quota2": {
+      "total_trades": 5,
+      "closed_trades": 5,
+      "sum_realized_r": 1.8448,
+      "sum_net_pnl_vst": 3.6342,
+      "win_count": 2,
+      "loss_count": 3,
+      "win_rate_pct": 40.0,
+      "avg_win_r": 2.6083,
+      "avg_loss_r": -1.1239,
+      "profit_factor": 1.5477
+    },
+    "cohort_1b_fase_b_quota10": {
+      "total_trades": 13,
+      "closed_trades": 11,
+      "sum_realized_r": 1.4465,
+      "sum_net_pnl_vst": 2.874,
+      "win_count": 3,
+      "loss_count": 8,
+      "win_rate_pct": 27.27,
+      "avg_win_r": 2.6227,
+      "avg_loss_r": -0.8027,
+      "profit_factor": 1.2279
+    },
+    "cohort_1_subtotal_pre_stop": {
+      "total_trades": 18,
+      "closed_trades": 16,
+      "sum_realized_r": 3.2913,
+      "sum_net_pnl_vst": 6.5082,
+      "win_count": 5,
+      "loss_count": 11,
+      "win_rate_pct": 31.25,
+      "avg_win_r": 2.617,
+      "avg_loss_r": -0.8903,
+      "profit_factor": 1.3382
+    },
+    "cohort_2_post_stop": {
+      "total_trades": 8,
+      "closed_trades": 8,
+      "sum_realized_r": 10.5421,
+      "sum_net_pnl_vst": 20.7432,
+      "win_count": 5,
+      "loss_count": 3,
+      "win_rate_pct": 62.5,
+      "avg_win_r": 2.5406,
+      "avg_loss_r": -0.7203,
+      "profit_factor": 5.8737
+    },
+    "cohort_3_total_active": {
+      "total_trades": 26,
+      "closed_trades": 24,
+      "sum_realized_r": 13.8334,
+      "sum_net_pnl_vst": 27.2514,
+      "win_count": 10,
+      "loss_count": 14,
+      "win_rate_pct": 41.67,
+      "avg_win_r": 2.5788,
+      "avg_loss_r": -0.8539,
+      "profit_factor": 2.1596
+    }
+  },
+  "anomalies_resolution": {
+    "A1_SAFE_USDT": {
+      "order_id": 79,
+      "provenance": "bx_emg_cls_1_1792109346_890f74 (Emergency Fail-Closed)",
+      "root_cause": "BingX API Error 109400 ReduceOnly on Hedge Mode -> TPSL_FAIL_CLOSED_CLOSING_POSITION",
+      "pnl_explanation": "Gross PnL +0.0189 VST (positive), but Net PnL -0.0380 VST (-0.0196 R) due to double taker fee."
+    },
+    "A2_PHA_USDT": {
+      "order_id": 83,
+      "status": "BACKFILLED",
+      "before": {
+        "entry_fee": 0.0,
+        "exit_fee": -0.04913755,
+        "realized_pnl": -0.10851015,
+        "realized_r": -0.058
+      },
+      "after": {
+        "entry_fee": -0.04913755,
+        "exit_fee": -0.04916724,
+        "realized_pnl": -0.15767739,
+        "realized_r": -0.0842
+      },
+      "root_cause": "Reconciliation cycle matched opening fee as exit fee and left entry fee as 0.0 due to 1s duration"
+    },
+    "A3_BASED_USDT": {
+      "order_id": "2111079490579861504",
+      "status": "VERIFIED_PRESENT",
+      "event_found": true,
+      "timestamp": "2026-10-16T12:59:08.216971+00:00",
+      "client_order_id": "bx_short_1792155546_027f11",
+      "root_cause": "File buffering or timing in monitor check. Event confirmed present in logs/audit.jsonl"
+    }
+  },
+  "sl_slippage_analysis": {
+    "count": 10,
+    "mean_realized_r": -1.1433,
+    "median_realized_r": -1.0572,
+    "min_realized_r": -1.7778,
+    "max_realized_r": -0.9244,
+    "mean_price_slippage_pct": 0.609,
+    "median_price_slippage_pct": 0.123
+  }
+}
