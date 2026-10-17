@@ -1,0 +1,44 @@
+{
+  "captured_at_utc": "2026-10-17T22:23:46.816033+00:00",
+  "action": "9router npm update 0.5.99 -> 0.5.104 + service restart",
+  "9router_version": "0.5.104",
+  "service_state": "active",
+  "combo_config_unchanged": [
+    {
+      "name": "testing_v1",
+      "models": "[\"ag/gemini-3.8-flash-high\"]"
+    },
+    {
+      "name": "fallback",
+      "models": "[\"ag/gemini-3.8-flash-high\"]"
+    },
+    {
+      "name": "frontend_delegate",
+      "models": "[\"ag/gemini-3.8-flash-high\"]"
+    }
+  ],
+  "provider_connections": [
+    {
+      "id": "92b2ee6e-d883-4b0c-b38d-0f96373c79da",
+      "name": "belajar.from0@gmail.com",
+      "email": "belajar.from0@gmail.com",
+      "isActive": 1,
+      "priority": 1
+    },
+    {
+      "id": "7d731472-fdee-4cb9-9afb-cce3e8d67c65",
+      "name": "neveersuren22@gmail.com",
+      "email": "neveersuren22@gmail.com",
+      "isActive": 1,
+      "priority": 2
+    }
+  ],
+  "completion_tests": {
+    "testing_v1": "{\"error\":{\"message\":\"[antigravity/gemini-3.8-flash-high] [403]: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 403,\\n    \\\"message\\\": \\\"This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.\\\",\\n    \\\" (reset after 1m 24s)\"}}",
+    "fallback": "{\"error\":{\"message\":\"[antigravity/gemini-3.8-flash-high] [403]: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 403,\\n    \\\"message\\\": \\\"This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.\\\",\\n    \\\" (reset after 1m 24s)\"}}",
+    "ag/gemini-3.8-flash-high": "{\"error\":{\"message\":\"[antigravity/gemini-3.8-flash-high] [403]: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 403,\\n    \\\"message\\\": \\\"This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.\\\",\\n    \\\" (reset after 1m 24s)\"}}",
+    "ag/gemini-3.8-flash": "{\"error\":{\"message\":\"[antigravity/gemini-3.8-flash] [403]: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 403,\\n    \\\"message\\\": \\\"This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.\\\",\\n    \\\"status\\\": \\\"PERMISSION_DENIED\\\",\\n    \\\"details\\\": [\\n      {\\n        \\\"@type\\\": \\\"type.googleapis.com/google.rpc.ErrorInfo\\\",\\n        \\\"reason\\\": \\\"TOS_VIOLATION\\\",\\n        \\\"domain\\\": \\\"cloudcode-pa.googleapis.com\\\",\\n        \\\"metadata\\\": {\\n          \\\"uiMessage\\\": \\\"true\\\",\\n          \\\"appeal_url\\\": \\\"https://forms.gle/hGzM9MEUv2azZsrb9\\\",\\n          \\\"appeal_url_link_text\\\": \\\"Submit Appeal\\\"\\n        }\\n      }\\n    ]\\n  }\\n}\\n (reset after 1m 24s)\"}}"
+  },
+  "decision_maker_instruction": "No combo model additions; report states this is the decision makers directive (Naufal Ananta, 2026-10-18).",
+  "note": "Provider emails shown are account identifiers; all secrets redacted."
+}
