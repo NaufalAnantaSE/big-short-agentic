@@ -1,0 +1,187 @@
+{
+  "investigation_timestamp": "2026-10-17T21:33:31.872458Z",
+  "session_id": "bx_sess_1791926045_8981c2",
+  "session_state": {
+    "session_id": "bx_sess_1791926045_8981c2",
+    "user_id": 3,
+    "status": "ACTIVE_SEARCHING",
+    "quota": 10,
+    "filled_count": 1,
+    "auto_scan": 1,
+    "last_scan_at": 1792272762.245535
+  },
+  "error_period_start_utc": "2026-10-16T19:59:04",
+  "triages_total_in_period": 1400,
+  "triages_failed_in_period": 1399,
+  "triages_valid_in_period": 1,
+  "failure_rate_pct": 99.93,
+  "top_symbols_forced_skip": [
+    [
+      "AGT-USDT",
+      396
+    ],
+    [
+      "DNA-USDT",
+      237
+    ],
+    [
+      "CLAUDIA-USDT",
+      218
+    ],
+    [
+      "GTC-USDT",
+      112
+    ],
+    [
+      "OPG-USDT",
+      103
+    ],
+    [
+      "SAND-USDT",
+      98
+    ],
+    [
+      "BASED-USDT",
+      95
+    ],
+    [
+      "CATE-USDT",
+      67
+    ],
+    [
+      "DOPE-USDT",
+      67
+    ],
+    [
+      "TIA-USDT",
+      64
+    ],
+    [
+      "FHE-USDT",
+      61
+    ],
+    [
+      "NMR-USDT",
+      61
+    ],
+    [
+      "NULLMASK-USDT",
+      60
+    ],
+    [
+      "DARKSWAP-USDT",
+      51
+    ],
+    [
+      "OGN-USDT",
+      49
+    ]
+  ],
+  "sample_gateway_errors": [
+    {
+      "timestamp": "2026-10-16T20:00:08.890180+00:00",
+      "event_type": "AI_BATCH_TRIAGE",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "candidates_count": 2,
+        "is_valid": false,
+        "ranked": [],
+        "selected_finalists": [],
+        "latency_ms": 718.461329001002,
+        "usage": {},
+        "error_type": "HTTP_ERROR",
+        "attempts": 1
+      }
+    },
+    {
+      "timestamp": "2026-10-16T20:01:12.509422+00:00",
+      "event_type": "AI_BATCH_TRIAGE",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "candidates_count": 3,
+        "is_valid": false,
+        "ranked": [],
+        "selected_finalists": [],
+        "latency_ms": 7.053282984998077,
+        "usage": {},
+        "error_type": "HTTP_ERROR",
+        "attempts": 1
+      }
+    },
+    {
+      "timestamp": "2026-10-16T20:02:16.176120+00:00",
+      "event_type": "AI_BATCH_TRIAGE",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "candidates_count": 3,
+        "is_valid": false,
+        "ranked": [],
+        "selected_finalists": [],
+        "latency_ms": 490.76631903881207,
+        "usage": {},
+        "error_type": "HTTP_ERROR",
+        "attempts": 1
+      }
+    },
+    {
+      "timestamp": "2026-10-16T20:03:18.578634+00:00",
+      "event_type": "AI_BATCH_TRIAGE",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "candidates_count": 3,
+        "is_valid": false,
+        "ranked": [],
+        "selected_finalists": [],
+        "latency_ms": 7.2242169990204275,
+        "usage": {},
+        "error_type": "HTTP_ERROR",
+        "attempts": 1
+      }
+    },
+    {
+      "timestamp": "2026-10-16T20:04:22.079410+00:00",
+      "event_type": "AI_BATCH_TRIAGE",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "candidates_count": 3,
+        "is_valid": false,
+        "ranked": [],
+        "selected_finalists": [],
+        "latency_ms": 537.8937639761716,
+        "usage": {},
+        "error_type": "HTTP_ERROR",
+        "attempts": 1
+      }
+    }
+  ],
+  "background_scan_errors_count": 16,
+  "background_scan_errors_sample": [
+    {
+      "timestamp": "2026-10-17T20:59:12.382396+00:00",
+      "event_type": "BACKGROUND_SCAN_ERROR",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "user_id": 3,
+        "error": "Failed to query account positions: BingX API Error [-1]: HTTP transport error: Client error '429 Too Many Requests' for url 'https://open-api-vst.bingx.com/openApi/swap/v2/user/positions?recvWindow=10000&timestamp=1792270752365&signature=183b294e5f526792ee9b21f7214c4dd8efc2e7afc552463f2b1c85a5beaa0a43'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429"
+      }
+    },
+    {
+      "timestamp": "2026-10-17T21:24:21.945789+00:00",
+      "event_type": "BACKGROUND_SCAN_ERROR",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "user_id": 3,
+        "error": "Failed to query account positions: BingX API Error [-1]: HTTP transport error: Client error '429 Too Many Requests' for url 'https://open-api-vst.bingx.com/openApi/swap/v2/user/positions?recvWindow=10000&timestamp=1792272261929&signature=9954b68d851eab14e94aefdf02b66c824d3ab18c0be23ff15b41182b31348659'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429"
+      }
+    },
+    {
+      "timestamp": "2026-10-17T21:25:21.918845+00:00",
+      "event_type": "BACKGROUND_SCAN_ERROR",
+      "session_id": "bx_sess_1791926045_8981c2",
+      "data": {
+        "user_id": 3,
+        "error": "Failed to query account positions: BingX API Error [-1]: HTTP transport error: Client error '429 Too Many Requests' for url 'https://open-api-vst.bingx.com/openApi/swap/v2/user/positions?recvWindow=10000&timestamp=1792272321902&signature=3af2a743d58562a1b7339548b0035aef05e94cb9a410382c61f009a2d006179c'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429"
+      }
+    }
+  ]
+}
