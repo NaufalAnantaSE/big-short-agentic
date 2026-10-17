@@ -100,8 +100,20 @@ Setelah seluruh 30 trade selesai:
      - **Tanggal:** 15 Oktober 2026 (03:50 WIB)
      - **Otorisasi:** Disetujui oleh Naufal Ananta (Decision Maker) atas rekomendasi review teknis Gemini 4 Argon & Muse.
      - **Rincian Perubahan:**
-     * **Trade #1 s/d Trade #5:** Berjalan dengan kuota simultan `quota = 2` (maksimal 2 posisi paralel bersamaan).
-     * **Trade #6 s/d Trade #30:** Batas kuota dinaikkan menjadi `quota = 10` (maksimal 10 posisi paralel bersamaan).
+       * **Trade #1 s/d Trade #5:** Berjalan dengan kuota simultan `quota = 2` (maksimal 2 posisi paralel bersamaan).
+       * **Trade #6 s/d Trade #30:** Batas kuota dinaikkan menjadi `quota = 10` (maksimal 10 posisi paralel bersamaan).
      - **Rasional:** Menghilangkan *bottleneck* durasi tunggu slot kuota (holding time 4–12 jam pada 2 koin sideways yang menahan pemindaian pasar) tanpa mengubah logika strategi, model AI (Gemini 3.8 Flash), prompt, filter hard-gate, formula teknikal, maupun parameter risiko tetap `risk_budget_per_trade = 2.00 VST`.
      - **Catatan Risiko:** Maksimal eksposur risiko serentak jika 10 posisi terbuka penuh adalah 10R (~20.00 VST) dengan estimasi margin terpakai ~35–55 VST. Batas total kumulatif batch tetap **N = 30 entry terisi**.
+
+     ### Amandemen 2 — Pengesahan Opsi C & Evaluasi Terstratifikasi Pasca-Drawdown 6,45R (17 Oktober 2026)
+     - **Tanggal:** 17 Oktober 2026
+     - **Otorisasi:** Disetujui oleh Naufal Ananta (Decision Maker) berdasarkan Adjudikasi Retrospektif Lead Reviewer (Gemini 4 Argon) pasca-review faktual Muse.
+     - **Rincian Ketetapan:**
+       * **Pelanggaran Batas Risiko Tetap Tercatat:** Batas penghentian drawdown protokol `DD_STOP = 6.0R` tertembus hingga puncak `6.45R` (overshoot `0.45R`) pada 16 Oktober 2026 ~15:04 WIB (saat penutupan PHA-USDT). Pemulihan kurva ekuitas berikutnya ke `0R` (dan pembentukan all-time high `+13.83R`) tidak membatalkan kegagalan sistem berhenti otomatis pada batas risiko.
+       * **Penyelesaian Batch Hingga N=30 (Opsi C):** Sesi `bx_sess_1791926045_8981c2` diizinkan melanjutkan pembukaan trade hingga tepat `total_entries == 30` (Trade #1 s/d #30), kemudian pembukaan order baru dihentikan (`quota = 0`) sembari menunggu seluruh sisa posisi menyentuh TP/SL alami bursa.
+       * **Evaluasi Wajib Terstratifikasi (Dual/Three-Cohort Reporting):** Evaluasi akhir dilarang hanya melaporkan angka agregat. Pelaporan wajib memisahkan:
+         1. **Kohor 1 (Pra-Stop — Trade #1–#18):** Kepatuhan protokol ketat dan perbandingan Fase A (Kuota 2) vs Fase B (Kuota 10).
+         2. **Kohor 2 (Pasca-Stop — Trade #19–#30):** Performa algoritma seleksi sinyal pasca-titik drawdown stop.
+         3. **Kohor 3 (Agregat Sampel Penuh — Trade #1–#30):** Kinerja keseluruhan batch konfirmasi terhadap baseline historis.
+
 
