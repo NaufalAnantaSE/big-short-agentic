@@ -1,0 +1,170 @@
+{
+  "case_status": "CLOSED",
+  "resolution": "Naufal Ananta configured Codex provider (gdrivenaufal@gmail.com) and updated combo testing_v1 to [\"cx/gpt-6.1-sol\", \"ag/gemini-3.8-flash-high\"]. Bot AI triage pipeline fully restored.",
+  "verified_at_utc": "2026-10-17T22:43:39.858423+00:00",
+  "provider_connections": [
+    {
+      "id": "ad314f4a-370a-4595-86d3-65b30c0672c5",
+      "provider": "codex",
+      "authType": "oauth",
+      "name": "gdrivenaufal@gmail.com",
+      "email": "gdrivenaufal@gmail.com",
+      "priority": 1,
+      "isActive": 1,
+      "createdAt": "2026-10-17T22:28:46.039Z",
+      "updatedAt": "2026-10-17T22:28:46.039Z"
+    }
+  ],
+  "combos": [
+    {
+      "name": "testing_v1",
+      "models": "[\"cx/gpt-6.1-sol\",\"ag/gemini-3.8-flash-high\"]",
+      "updatedAt": "2026-10-17T22:31:54.016Z"
+    },
+    {
+      "name": "fallback",
+      "models": "[\"cx/gpt-6.1-sol\",\"ag/gemini-3.8-flash-high\"]",
+      "updatedAt": "2026-10-17T22:31:37.279Z"
+    },
+    {
+      "name": "frontend_delegate",
+      "models": "[\"ag/gemini-3.8-flash-high\"]",
+      "updatedAt": "2026-10-11 16:01:51"
+    }
+  ],
+  "direct_curl_verification": {
+    "id": "resp_02ed81a951de6db2016ad3fa1a57808191ac2c4cd3ddb11e17",
+    "object": "chat.completion",
+    "created": 1792277018,
+    "model": "gpt-6.1-sol",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Verification received. Ready to help."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 2491,
+      "completion_tokens": 11,
+      "total_tokens": 2502
+    }
+  },
+  "session_state": {
+    "session_id": "bx_sess_1791926045_8981c2",
+    "user_id": 3,
+    "status": "ACTIVE_SEARCHING",
+    "quota": 10,
+    "filled_count": 1,
+    "auto_scan": 1,
+    "last_scan_at": 1792276959.0893853
+  },
+  "orders_summary": {
+    "total": 26,
+    "closed": 25,
+    "open": 1
+  },
+  "recovery_metrics": {
+    "recovery_started_utc": "2026-10-17T22:32:38.966352+00:00",
+    "triages_success_count": 10,
+    "triages_fallback_count": 0,
+    "success_rate_pct": 100.0,
+    "recent_samples": [
+      {
+        "timestamp": "2026-10-17T22:40:26.495640+00:00",
+        "event_type": "AI_BATCH_TRIAGE",
+        "session_id": "bx_sess_1791926045_8981c2",
+        "data": {
+          "candidates_count": 1,
+          "is_valid": true,
+          "ranked": [
+            {
+              "symbol": "AGT-USDT",
+              "rank": 1,
+              "action": "SKIP",
+              "suggested_direction": "SHORT",
+              "conviction_score": 28,
+              "triage_reason": "Support-pullback positioning at mid-retracement lacks confirmed exhaustion or breakdown. RSI 61.6 and average volume do not establish buyer dry-up; elevated ATR increases squeeze risk. Positive funding alone is insufficient for a short finalist."
+            }
+          ],
+          "selected_finalists": [],
+          "latency_ms": 2950.124558992684,
+          "usage": {
+            "prompt_tokens": 415,
+            "completion_tokens": 96,
+            "total_tokens": 511
+          },
+          "error_type": null,
+          "attempts": 1
+        }
+      },
+      {
+        "timestamp": "2026-10-17T22:41:33.531786+00:00",
+        "event_type": "AI_BATCH_TRIAGE",
+        "session_id": "bx_sess_1791926045_8981c2",
+        "data": {
+          "candidates_count": 2,
+          "is_valid": true,
+          "ranked": [
+            {
+              "symbol": "DOPE-USDT",
+              "rank": 1,
+              "action": "WATCH",
+              "suggested_direction": "SHORT",
+              "conviction_score": 62,
+              "triage_reason": "Stronger exhaustion candidate, but shallow pullback, RSI 64.2 and average volume do not confirm buyer dry-up or reversal. High ATR and wider spread increase squeeze and execution risk; await rejection and breakdown confirmation."
+            },
+            {
+              "symbol": "AGT-USDT",
+              "rank": 2,
+              "action": "WATCH",
+              "suggested_direction": "SHORT",
+              "conviction_score": 53,
+              "triage_reason": "Tighter spread and more positive funding favor short execution, but the support-pullback pattern risks a rebound. RSI 61.6 and average volume provide no clear exhaustion signal; await support failure and a failed retest."
+            }
+          ],
+          "selected_finalists": [],
+          "latency_ms": 3700.9154009865597,
+          "usage": {
+            "prompt_tokens": 512,
+            "completion_tokens": 169,
+            "total_tokens": 681
+          },
+          "error_type": null,
+          "attempts": 1
+        }
+      },
+      {
+        "timestamp": "2026-10-17T22:42:39.088366+00:00",
+        "event_type": "AI_BATCH_TRIAGE",
+        "session_id": "bx_sess_1791926045_8981c2",
+        "data": {
+          "candidates_count": 1,
+          "is_valid": true,
+          "ranked": [
+            {
+              "symbol": "JST-USDT",
+              "rank": 1,
+              "action": "SKIP",
+              "suggested_direction": "SHORT",
+              "conviction_score": 24,
+              "triage_reason": "No matched reversal playbook or clear exhaustion signal: RSI 47.5 and 1.0x volume are neutral, while the shallow pullback lacks breakdown confirmation. Negative funding adds short-squeeze risk; tight spread alone does not establish a short edge."
+            }
+          ],
+          "selected_finalists": [],
+          "latency_ms": 3194.36878093984,
+          "usage": {
+            "prompt_tokens": 413,
+            "completion_tokens": 101,
+            "total_tokens": 514
+          },
+          "error_type": null,
+          "attempts": 1
+        }
+      }
+    ]
+  }
+}
